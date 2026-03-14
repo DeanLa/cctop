@@ -1,10 +1,10 @@
 # cctop
 
-![cctop](images/logo-small.png)
+![cctop](media/logo-small.png)
 
-Like `htop`, but for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A live terminal dashboard that shows all your sessions at a glance — status, context usage, tokens, and latest messages.
+Like `htop`, but for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A live terminal dashboard that shows all your sessions at a glance, status, context usage, tokens, and latest messages.
 
-<!-- TODO: Add demo video/screenshot -->
+<video src="media/cctop-demo.mp4" autoplay loop muted playsinline width="100%"></video>
 
 ## Install
 
@@ -24,7 +24,7 @@ Or use the `/cctop` slash command from within Claude Code.
 
 ## Why
 
-If you're past the "one session at a time" stage but not running a fleet of headless agents, you're in the middle ground where most tools don't help. You have 4–20 sessions open across multiple projects — refactoring one repo while tests run in another, firing off a prompt in a third while waiting for a fourth to finish. You context-switch constantly, lose track of which tab is blocked on you, and forget what that session in the background was even doing.
+If you're past the "one session at a time" stage but not running a fleet of headless agents, you're in the middle ground where most tools don't help. You have 4–20 sessions open across multiple projects, refactoring one repo while tests run in another, firing off a prompt in a third while waiting for a fourth to finish. You context-switch constantly, lose track of which tab is blocked on you, and forget what that session in the background was even doing.
 
 cctop gives you one screen to see all of them.
 
