@@ -1,0 +1,61 @@
+# cctop — Claude Code Sessions Dashboard
+
+A live terminal dashboard for monitoring all your Claude Code sessions at a glance. Like `htop`, but for Claude Code.
+
+## Why
+
+Power users run multiple Claude Code sessions simultaneously — one refactoring a module, another writing tests, a third researching an API. You end up tab-switching between terminals just to check "is it done yet?" or "is it stuck waiting for me?" There's no central place to see what's happening across sessions.
+
+## What It Does
+
+Installs a lightweight hook into Claude Code that tracks session activity in real time. A companion TUI dashboard (`/cctop`) displays all active sessions in a single live-updating table:
+
+- **Status** — see at a glance whether each session is idle (waiting for you), thinking, editing files, running commands, searching the web, or spawning subagents
+- **Project & branch** — know which codebase and branch each session is working in
+- **Context usage** — monitor how much of the context window has been consumed, so you can wrap up or start fresh before hitting limits
+- **Tool count** — track how many tool calls a session has made
+- **Model** — which Claude model each session is using
+- **Last messages** — peek at the most recent user prompt and Claude response without switching terminals
+
+Sessions that go quiet for 5+ minutes are marked stale. Sessions that end clean up after themselves automatically.
+
+## Who It's For
+
+Anyone running more than one Claude Code session at a time — or anyone who wants a quick overview of what's happening without context-switching into each terminal.
+
+## Project Structure
+
+- `plugin/` — distribution files (only this directory gets installed)
+  - `plugin/scripts/cctop-hook.sh` — hook handler, writes `~/.cctop/<session-id>.json`
+  - `plugin/scripts/cctop_dashboard.py` — Textual TUI app (run with `uv run --script`)
+  - `plugin/scripts/cctop-poller.py` — background transcript poller
+  - `plugin/scripts/launch-cctop.sh` — convenience launcher
+  - `plugin/hooks/hooks.json` — registers the hook for 7 events
+  - `plugin/.claude-plugin/plugin.json` — plugin manifest
+  - `plugin/commands/cctop.md` — slash command
+- `.claude-plugin/marketplace.json` — local marketplace manifest (points to `./plugin/`)
+- `tests/test_cctop_dashboard.py` — TUI tests
+- `install.sh` — reinstalls plugin into Claude's cache
+
+## Reference Docs
+
+The `reference/` directory contains Claude Code internals documentation, split by topic. **Read these on-demand** — don't load them all upfront, just read the one relevant to your current task:
+
+| File | When to read |
+|---|---|
+| `reference/hooks-api.md` | Writing or debugging hooks — events, stdin fields, output format |
+| `reference/transcript-format.md` | Parsing JSONL transcripts — entry types, field shapes, path encoding |
+| `reference/sessions-index.md` | Reading the sessions index — schema, customTitle timing |
+| `reference/plugin-system.md` | Plugin install/dev workflow — manifests, cache, gotchas |
+| `reference/session-data-files.md` | Tool counts and session-status JSON files |
+
+## Installing After Changes
+
+The plugin runs from a **copy** in `~/.claude/plugins/cache/`, not from this directory.
+After editing any file under `plugin/`, you **must** reinstall:
+
+```bash
+./install.sh --dev
+```
+
+**Always run `./install.sh --dev` after modifying any plugin file** (hooks, scripts, commands, manifests). New Claude sessions will pick up the changes; existing sessions keep the old version.

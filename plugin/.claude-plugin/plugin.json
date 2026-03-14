@@ -1,0 +1,22 @@
+{
+  "name": "cctop",
+  "version": "0.1.0",
+  "description": "Live TUI dashboard for monitoring all active Claude Code sessions — status, context usage, tokens, cost, and latest messages at a glance.",
+  "author": {
+    "name": "Dean Langsam",
+    "url": "https://github.com/DeanLa",
+    "email": "deanla@gmail.com"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/DeanLa/cctop",
+  "repository": "https://github.com/DeanLa/cctop.git",
+  "keywords": [
+    "claude code",
+    "dashboard",
+    "sessions",
+    "monitoring",
+    "tui",
+    "textual",
+    "htop"
+  ]
+}

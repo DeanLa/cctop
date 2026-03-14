@@ -1,0 +1,9 @@
+#!/bin/bash
+# cctop — Claude Code Sessions dashboard
+SCRIPTS_DIR="$(find "${HOME}/.claude/plugins/cache/cctop" -type d -name scripts -maxdepth 4 2>/dev/null | head -1)"
+PLUGIN_DIR="${SCRIPTS_DIR:+$(dirname "$SCRIPTS_DIR")}"
+if [ -z "$PLUGIN_DIR" ]; then
+    echo "cctop: plugin not found. Install with: claude plugin install cctop@cctop --scope user" >&2
+    exit 1
+fi
+exec "$PLUGIN_DIR/scripts/launch-cctop.sh"
