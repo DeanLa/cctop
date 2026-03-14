@@ -59,3 +59,7 @@ After editing any file under `plugin/`, you **must** reinstall:
 ```
 
 **Always run `./install.sh --dev` after modifying any plugin file** (hooks, scripts, commands, manifests). New Claude sessions will pick up the changes; existing sessions keep the old version.
+
+## Docs Hygiene
+
+When making changes that affect user-visible behavior (new features, changed columns, new keybindings, install steps, usage), always check that `README.md` and `CONTRIBUTING.md` are updated to match.
