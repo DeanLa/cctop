@@ -1,8 +1,6 @@
 # cctop
 
-<p align="center">
-  <img src="logo-wide.png" alt="cctop" width="600">
-</p>
+![cctop](images/logo-small.png)
 
 Like `htop`, but for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A live terminal dashboard that shows all your sessions at a glance — status, context usage, tokens, and latest messages.
 
