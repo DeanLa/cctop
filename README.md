@@ -4,7 +4,7 @@
 
 Like `htop`, but for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A live terminal dashboard that shows all your sessions at a glance, status, context usage, tokens, and latest messages.
 
-https://github.com/DeanLa/cctop/raw/main/media/cctop-demo.mp4
+![cctop demo](media/cctop-demo.gif)
 
 ## Install
 
