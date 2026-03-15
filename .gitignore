@@ -7,3 +7,9 @@ __pycache__/
 *.local.*
 *-local/
 plans/
+
+# Remotion video
+video/*
+video/node_modules/
+video/out/
+video/.remotion/
