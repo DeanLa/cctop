@@ -35,6 +35,8 @@ Anyone running more than one Claude Code session at a time, or anyone who wants 
 - `.claude-plugin/marketplace.json`, local marketplace manifest (points to `./plugin/`)
 - `tests/test_cctop_dashboard.py`, TUI tests
 - `install.sh`, reinstalls plugin into Claude's cache
+- `plans/`, gitignored, PRDs and design docs (never commit these)
+- `BACKLOG.md`, numbered feature backlog with completion tracking
 
 ## Reference Docs
 
@@ -71,6 +73,11 @@ Before committing, run a basic security audit on staged changes:
 - No SentinelOne internal references (GHE URLs, internal tooling, team names)
 - TruffleHog runs as a pre-commit hook, but also manually sanity-check diffs for anything it might miss
 
+## Commits
+
+- Split uncommitted changes into logical, self-contained commits (e.g. separate feature code, tests, docs, backlog updates)
+- When moving or renaming files, update all references in other files (BACKLOG.md links, CLAUDE.md structure, README, etc.) in the same or immediately following commit
+
 ## Docs Hygiene
 
-When making changes that affect user-visible behavior (new features, changed columns, new keybindings, install steps, usage), always check that `README.md` and `CONTRIBUTING.md` are updated to match.
+When making changes that affect user-visible behavior (new features, changed columns, new keybindings, install steps, usage), always check that `README.md`, `BACKLOG.md`, and `CONTRIBUTING.md` are updated to match.
