@@ -52,6 +52,19 @@ def _clean_user_msg(msg: str) -> str:
     return msg
 
 
+def _render_message(label: str, text: str, max_chars: int = 500) -> list:
+    """Render a labeled message as markdown. Returns list of Rich renderables."""
+    text = (text or "").strip()
+    if not text:
+        return [Text.from_markup(f"[dim]{label}:[/dim] —")]
+    if len(text) > max_chars:
+        text = text[:max_chars] + "…"
+    return [
+        Text.from_markup(f"[dim]{label}:[/dim]"),
+        RichMarkdown(text),
+    ]
+
+
 STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "idle": ("green", "idle"),
     "thinking": ("yellow", "thinking"),
@@ -516,6 +529,10 @@ class SessionsDashboard(App):
                 format_relative_time(s.last_activity),
                 key=s.session_id,
             )
+        # Clear detail panel when table is empty (no sessions left)
+        if table.row_count == 0:
+            self.query_one("#detail", Static).update("")
+
         # Restore cursor to the previously highlighted row
         if saved_key is not None and table.row_count > 0:
             try:
@@ -560,25 +577,12 @@ class SessionsDashboard(App):
             meta_parts.append(f"stop: {session.stop_reason}")
 
         # Build detail as Rich renderables
-        user_text = (session.last_user_msg or "—").replace("\n", " ").strip()
-        if len(user_text) > 300:
-            user_text = user_text[:300] + "…"
-
-        asst_text = (session.last_assistant_msg or "").strip()
-        if len(asst_text) > 800:
-            asst_text = asst_text[:800] + "…"
-
         parts: list = [
             Text.from_markup(header_line),
             Text(""),
-            Text.from_markup(f"[dim]User:[/dim]  {user_text}"),
         ]
-
-        if asst_text:
-            parts.append(Text.from_markup("[dim]Claude:[/dim]"))
-            parts.append(RichMarkdown(asst_text))
-        else:
-            parts.append(Text.from_markup("[dim]Claude:[/dim] —"))
+        parts.extend(_render_message("User", session.last_user_msg, 300))
+        parts.extend(_render_message("Claude", session.last_assistant_msg, 800))
 
         if meta_parts:
             parts.append(Text.from_markup(f"[dim]Info:[/dim]   {'  '.join(meta_parts)}"))
