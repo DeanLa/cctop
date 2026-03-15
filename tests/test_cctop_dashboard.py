@@ -97,6 +97,16 @@ def write_fake_session(tmpdir: Path, sid: str, *,
     (tmpdir / f"{sid}.poller.json").write_text(json.dumps(poller))
 
 
+def _render_static_text(detail: Static) -> str:
+    """Render a Static widget's content to plain text for assertions."""
+    content = detail.content
+    if not content:
+        return ""
+    buf = StringIO()
+    RichConsole(file=buf, force_terminal=False, width=200).print(content)
+    return buf.getvalue()
+
+
 # --- Unit tests for helpers ---
 
 def test_format_tokens_zero():
@@ -284,7 +294,15 @@ def test_render_message_empty_text():
 
 
 def test_render_message_none_text():
+    """None text should render as a dash placeholder."""
     result = _render_message("Claude", None)
+    assert len(result) == 1
+    assert "—" in str(result[0])
+
+
+def test_render_message_whitespace_only():
+    """Whitespace-only text should render as a dash placeholder."""
+    result = _render_message("User", "   \n  ")
     assert len(result) == 1
     assert "—" in str(result[0])
 
@@ -300,21 +318,13 @@ def test_render_message_truncation():
     """Text exceeding max_chars should be truncated with ellipsis."""
     long_text = "x" * 100
     result = _render_message("User", long_text, max_chars=50)
-    # The markdown renderable contains the truncated text
     assert len(result) == 2
+    # Verify the markdown source was actually truncated with ellipsis
+    assert result[1].markup.endswith("…")
+    assert len(result[1].markup) == 51  # 50 chars + ellipsis
 
 
 # --- Detail panel integration tests ---
-
-
-def _render_static_text(detail: Static) -> str:
-    """Render a Static widget's content to plain text for assertions."""
-    content = detail.content
-    if not content:
-        return ""
-    buf = StringIO()
-    RichConsole(file=buf, force_terminal=False, width=200).print(content)
-    return buf.getvalue()
 
 
 @pytest.mark.asyncio
@@ -332,6 +342,8 @@ async def test_detail_panel_shows_user_and_assistant(fake_status_dir):
         rendered = _render_static_text(detail)
         assert "User" in rendered
         assert "Claude" in rendered
+        assert "my user question" in rendered
+        assert "my assistant answer" in rendered
 
 
 @pytest.mark.asyncio

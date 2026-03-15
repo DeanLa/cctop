@@ -52,7 +52,7 @@ def _clean_user_msg(msg: str) -> str:
     return msg
 
 
-def _render_message(label: str, text: str, max_chars: int = 500) -> list:
+def _render_message(label: str, text: str | None, max_chars: int = 500) -> list[Text | RichMarkdown]:
     """Render a labeled message as markdown. Returns list of Rich renderables."""
     text = (text or "").strip()
     if not text:
