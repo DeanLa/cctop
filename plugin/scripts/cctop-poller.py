@@ -96,9 +96,9 @@ def parse_new_lines(lines: list[str]) -> dict:
         message = obj.get("message") or {}
 
         if msg_type == "user":
-            turns_delta += 1
             content = message.get("content", "")
             if isinstance(content, str) and content and not content.startswith("<"):
+                turns_delta += 1
                 updates["last_user_msg"] = content
 
         elif msg_type == "assistant":
