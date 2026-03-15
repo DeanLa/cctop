@@ -15,12 +15,12 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **9.** Fix `Turns` count, count user messages instead of tool calls (a turn is a user-assistant exchange, not every tool invocation) `PR-C`
 
 ## Detail Panel
-- [ ] **10.** The user message is not formatted markdown like the assistant message, make them consistent `PR-B`
-- [ ] **11.** Replace `Static` with `RichLog`/`Markdown` widget for markdown rendering `PR-B`
+- [x] **10.** The user message is not formatted markdown like the assistant message, make them consistent `PR-B`
+- [x] **11.** DRY message rendering: both user and assistant messages go through shared `_render_message` helper `PR-B`
 - [x] **12.** Increase assistant message lines from 4 to 5
 - [x] **13.** Wrap detail panel text at window width (with margin) instead of fixed 100 chars
 - [ ] **14.** Parse system-injected user messages (e.g. `<task-notification>`) and display them nicely, show "Subagent completed: <summary>" instead of hiding them entirely `PR-H`
-- [ ] **15.** Bug: detail panel still shows last selected session after all sessions end, should clear when no active sessions remain `PR-B`
+- [x] **15.** Bug: detail panel still shows last selected session after all sessions end, should clear when no active sessions remain `PR-B`
 
 ## Debugging
 - [ ] **16.** Debug mode, log all hook events with full JSON stdin to a file for troubleshooting `PR-D`
