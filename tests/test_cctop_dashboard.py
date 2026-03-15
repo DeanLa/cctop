@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -23,6 +24,7 @@ from cctop_dashboard import (
     format_tokens,
     format_relative_time,
     estimate_cost,
+    purge_dead_sessions,
     STATUS_DIR,
 )
 
@@ -52,17 +54,22 @@ def write_fake_session(tmpdir: Path, sid: str, *,
                        files_edited: list[str] | None = None,
                        git_branch: str = "main",
                        slug: str = "",
-                       custom_title: str = "") -> None:
+                       custom_title: str = "",
+                       pid: int | None = None,
+                       last_activity: str | None = None,
+                       started_at: str | None = None) -> None:
     """Write a pair of hook + poller JSON files into tmpdir."""
     hook = {
         "session_id": sid,
         "cwd": cwd,
         "status": status,
-        "last_activity": _now_iso(),
-        "started_at": _ago_iso(30),
+        "last_activity": last_activity or _now_iso(),
+        "started_at": started_at or _ago_iso(30),
         "model": model,
         "tool_count": 0,
     }
+    if pid is not None:
+        hook["pid"] = pid
     (tmpdir / f"{sid}.json").write_text(json.dumps(hook))
     poller = {
         "slug": slug or f"proj-{sid[:4]}",
@@ -203,3 +210,61 @@ async def test_detail_panel_updates(fake_status_dir):
         # The first row should auto-highlight and populate detail
         content = str(detail.content)
         assert "/home/user/myproject" in content
+
+
+# --- Purge dead sessions tests ---
+
+
+def test_purge_dead_pid(fake_status_dir):
+    """Session with a dead PID (99999) should be removed."""
+    write_fake_session(fake_status_dir, "dead-1111", pid=99999)
+    count = purge_dead_sessions()
+    assert count == 1
+    assert not (fake_status_dir / "dead-1111.json").exists()
+    assert not (fake_status_dir / "dead-1111.poller.json").exists()
+
+
+def test_purge_alive_pid(fake_status_dir):
+    """Session with our own PID (alive) should be kept."""
+    write_fake_session(fake_status_dir, "alive-2222", pid=os.getpid())
+    count = purge_dead_sessions()
+    assert count == 0
+    assert (fake_status_dir / "alive-2222.json").exists()
+
+
+def test_purge_stale_no_pid(fake_status_dir):
+    """Session without pid field and last_activity 10min ago should be removed."""
+    write_fake_session(
+        fake_status_dir, "stale-3333",
+        last_activity=_ago_iso(10),
+        started_at=_ago_iso(30),
+    )
+    count = purge_dead_sessions()
+    assert count == 1
+    assert not (fake_status_dir / "stale-3333.json").exists()
+
+
+def test_purge_recent_no_pid(fake_status_dir):
+    """Session without pid field but recent activity should be kept."""
+    write_fake_session(
+        fake_status_dir, "recent-4444",
+        last_activity=_now_iso(),
+        started_at=_ago_iso(10),
+    )
+    count = purge_dead_sessions()
+    assert count == 0
+    assert (fake_status_dir / "recent-4444.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_purge_keybinding(fake_status_dir):
+    """Pressing R should purge dead sessions and remove them from the table."""
+    write_fake_session(fake_status_dir, "dead-5555", pid=99999)
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = app.query_one(DataTable)
+        assert table.row_count == 1
+        await pilot.press("R")
+        await pilot.pause()
+        assert table.row_count == 0
