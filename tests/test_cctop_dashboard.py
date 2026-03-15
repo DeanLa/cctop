@@ -9,10 +9,12 @@ import json
 import os
 import tempfile
 from datetime import datetime, timezone, timedelta
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from rich.console import Console as RichConsole, Group
 from textual.widgets import DataTable, Static
 
 import sys
@@ -21,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "plugin" / "scri
 from cctop_dashboard import (
     SessionsDashboard,
     SortPicker,
+    _render_message,
     format_tokens,
     format_relative_time,
     estimate_cost,
@@ -153,11 +156,11 @@ def fake_status_dir(tmp_path):
 
 @pytest.mark.asyncio
 async def test_app_starts_empty(fake_status_dir):
-    """Empty status dir → 12 columns, 0 rows."""
+    """Empty status dir → 11 columns, 0 rows."""
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         table = app.query_one(DataTable)
-        assert len(table.columns) == 12
+        assert len(table.columns) == 11
         assert table.row_count == 0
 
 
@@ -208,8 +211,8 @@ async def test_detail_panel_updates(fake_status_dir):
         await pilot.pause()
         detail = app.query_one("#detail", Static)
         # The first row should auto-highlight and populate detail
-        content = str(detail.content)
-        assert "/home/user/myproject" in content
+        rendered = _render_static_text(detail)
+        assert "/home/user/myproject" in rendered
 
 
 # --- Purge dead sessions tests ---
@@ -268,3 +271,81 @@ async def test_purge_keybinding(fake_status_dir):
         await pilot.press("R")
         await pilot.pause()
         assert table.row_count == 0
+
+
+# --- _render_message unit tests ---
+
+
+def test_render_message_empty_text():
+    """Empty or None text should render as a dash placeholder."""
+    result = _render_message("User", "")
+    assert len(result) == 1
+    assert "—" in str(result[0])
+
+
+def test_render_message_none_text():
+    result = _render_message("Claude", None)
+    assert len(result) == 1
+    assert "—" in str(result[0])
+
+
+def test_render_message_normal_text():
+    """Non-empty text should produce label + markdown renderable."""
+    result = _render_message("User", "hello world")
+    assert len(result) == 2
+    assert "User" in str(result[0])
+
+
+def test_render_message_truncation():
+    """Text exceeding max_chars should be truncated with ellipsis."""
+    long_text = "x" * 100
+    result = _render_message("User", long_text, max_chars=50)
+    # The markdown renderable contains the truncated text
+    assert len(result) == 2
+
+
+# --- Detail panel integration tests ---
+
+
+def _render_static_text(detail: Static) -> str:
+    """Render a Static widget's content to plain text for assertions."""
+    content = detail.content
+    if not content:
+        return ""
+    buf = StringIO()
+    RichConsole(file=buf, force_terminal=False, width=200).print(content)
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_detail_panel_shows_user_and_assistant(fake_status_dir):
+    """Detail panel should include both user and assistant message text."""
+    write_fake_session(
+        fake_status_dir, "detail-1111",
+        last_user_msg="my user question",
+        last_assistant_msg="my assistant answer",
+    )
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        detail = app.query_one("#detail", Static)
+        rendered = _render_static_text(detail)
+        assert "User" in rendered
+        assert "Claude" in rendered
+
+
+@pytest.mark.asyncio
+async def test_detail_panel_clears_when_sessions_removed(fake_status_dir):
+    """Detail panel should clear when all sessions are purged."""
+    write_fake_session(fake_status_dir, "temp-1111", pid=99999)
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        detail = app.query_one("#detail", Static)
+        # Detail should have content from the highlighted session
+        assert isinstance(detail.content, Group)
+        # Purge the dead session
+        await pilot.press("R")
+        await pilot.pause()
+        # Detail should now be empty
+        assert str(detail.content) == ""
