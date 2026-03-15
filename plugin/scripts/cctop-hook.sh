@@ -68,6 +68,7 @@ echo "$EXISTING" | jq \
     --arg now "$NOW" \
     --arg tp "$TRANSCRIPT_PATH" \
     --arg model "$MODEL" \
+    --argjson ppid "${PPID:-0}" \
     '{
         session_id: $sid,
         cwd: $cwd,
@@ -76,6 +77,7 @@ echo "$EXISTING" | jq \
         last_event: $event,
         last_activity: $now,
         started_at: (.started_at // $now),
+        pid: (if $ppid > 0 then $ppid else (.pid // null) end),
         transcript_path: (if $tp != "" then $tp else (.transcript_path // "") end),
         model: (if $model != "" then $model else (.model // "") end),
         tool_count: (if $event == "PostToolUse" then ((.tool_count // 0) + 1) else (.tool_count // 0) end)
