@@ -63,6 +63,14 @@ After editing any file under `plugin/`, you **must** reinstall:
 
 - Use commas instead of emdashes (—) in prose
 
+## Security
+
+Before committing, run a basic security audit on staged changes:
+- No hardcoded secrets, API keys, tokens, or passwords
+- No personal information (real names, private emails, internal hostnames, private IPs)
+- No SentinelOne internal references (GHE URLs, internal tooling, team names)
+- TruffleHog runs as a pre-commit hook, but also manually sanity-check diffs for anything it might miss
+
 ## Docs Hygiene
 
 When making changes that affect user-visible behavior (new features, changed columns, new keybindings, install steps, usage), always check that `README.md` and `CONTRIBUTING.md` are updated to match.
