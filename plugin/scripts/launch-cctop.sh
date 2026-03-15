@@ -2,6 +2,13 @@
 # Launch cctop — Claude Code Sessions dashboard with the background poller
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 
+# Handle --reset: wipe session data before starting
+if [[ " $* " == *" --reset "* ]]; then
+    rm -rf ~/.cctop
+    mkdir -p ~/.cctop
+    echo "cctop: session data cleared"
+fi
+
 # Start the poller in the background
 uv run --script "$SCRIPT_DIR/cctop-poller.py" &
 POLLER_PID=$!
@@ -10,4 +17,4 @@ POLLER_PID=$!
 trap "kill $POLLER_PID 2>/dev/null; wait $POLLER_PID 2>/dev/null" EXIT
 
 # Run the dashboard in the foreground
-uv run --script "$SCRIPT_DIR/cctop_dashboard.py"
+uv run --script "$SCRIPT_DIR/cctop_dashboard.py" "$@"

@@ -199,6 +199,92 @@ def write_json(path: Path, data: dict) -> None:
             pass
 
 
+CLEANUP_INTERVAL = 30.0
+GRACE_PERIOD = 180  # 3 minutes — don't nuke sessions still spinning up
+STALE_SECONDS = 5 * 60
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Check if a process with the given PID is still running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Process exists but we can't signal it — still alive
+        return True
+    except OSError:
+        return False
+
+
+def cleanup_dead_sessions() -> int:
+    """Remove session files whose owning Claude process has exited.
+
+    Returns the number of sessions cleaned up.
+    """
+    if not STATUS_DIR.is_dir():
+        return 0
+
+    removed = 0
+    now = time.time()
+
+    for hook_fp in STATUS_DIR.glob("*.json"):
+        if hook_fp.name.endswith(".poller.json"):
+            continue
+
+        try:
+            hook = json.loads(hook_fp.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        sid = hook.get("session_id", hook_fp.stem)
+
+        # Grace period: skip sessions that started less than 3 minutes ago
+        started_at = hook.get("started_at", "")
+        if started_at:
+            try:
+                from datetime import datetime, timezone
+                ts = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                age = (datetime.now(timezone.utc) - ts).total_seconds()
+                if age < GRACE_PERIOD:
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        pid = hook.get("pid")
+        is_dead = False
+
+        if pid is not None and isinstance(pid, int) and pid > 0:
+            # PID-based check
+            is_dead = not _is_pid_alive(pid)
+        else:
+            # Staleness fallback for pre-PID session files
+            last_activity = hook.get("last_activity", "")
+            if last_activity:
+                try:
+                    from datetime import datetime, timezone
+                    ts = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
+                    age = (datetime.now(timezone.utc) - ts).total_seconds()
+                    is_dead = age > STALE_SECONDS
+                except (ValueError, TypeError):
+                    pass
+
+        if is_dead:
+            try:
+                hook_fp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            poller_fp = STATUS_DIR / f"{sid}.poller.json"
+            try:
+                poller_fp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            removed += 1
+
+    return removed
+
+
 def read_new_jsonl_lines(
     transcript_path: str, offset: int, prev_inode: int = 0
 ) -> tuple[list[str], int, int]:
@@ -440,8 +526,13 @@ def poll_once() -> None:
 
 
 def main() -> None:
+    last_cleanup = 0.0
     while not _shutdown:
         poll_once()
+        now = time.monotonic()
+        if now - last_cleanup >= CLEANUP_INTERVAL:
+            cleanup_dead_sessions()
+            last_cleanup = now
         deadline = time.monotonic() + POLL_INTERVAL
         while time.monotonic() < deadline and not _shutdown:
             time.sleep(0.1)

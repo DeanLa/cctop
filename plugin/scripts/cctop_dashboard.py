@@ -13,6 +13,8 @@ from __future__ import annotations
 # --- Imports ---
 import json
 import os
+import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass
@@ -297,6 +299,58 @@ def load_sessions() -> list[SessionInfo]:
     return sessions
 
 
+def purge_dead_sessions() -> int:
+    """Remove session files whose owning Claude process has exited.
+
+    Uses PID check when available, falls back to staleness heuristic.
+    Returns the number of sessions cleaned up.
+    """
+    if not STATUS_DIR.is_dir():
+        return 0
+
+    removed = 0
+    for fp in STATUS_DIR.glob("*.json"):
+        if fp.name.endswith(".poller.json"):
+            continue
+        try:
+            hook = json.loads(fp.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        sid = hook.get("session_id", fp.stem)
+        pid = hook.get("pid")
+        is_dead = False
+
+        if pid is not None and isinstance(pid, int) and pid > 0:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                is_dead = True
+            except PermissionError:
+                pass  # process exists
+            except OSError:
+                is_dead = True
+        else:
+            # Staleness fallback for pre-PID files
+            age = _parse_age_seconds(hook.get("last_activity", ""))
+            if age is not None and age > STALE_SECONDS:
+                is_dead = True
+
+        if is_dead:
+            try:
+                fp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            poller_fp = STATUS_DIR / f"{sid}.poller.json"
+            try:
+                poller_fp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            removed += 1
+
+    return removed
+
+
 # --- Sort Picker Modal ---
 
 
@@ -359,6 +413,7 @@ class SessionsDashboard(App):
         Binding("ctrl+c", "quit", "Quit", show=False, priority=True, system=True),
         Binding("q", "quit", "Quit"),
         Binding("r", "force_refresh", "Refresh"),
+        Binding("R", "purge_dead", "Purge dead"),
         Binding("s", "open_sort", "Sort"),
     ]
 
@@ -384,6 +439,15 @@ class SessionsDashboard(App):
     def action_force_refresh(self) -> None:
         """Force reload all session data."""
         self.refresh_data()
+
+    def action_purge_dead(self) -> None:
+        """Remove dead session files and refresh."""
+        count = purge_dead_sessions()
+        self.refresh_data()
+        if count:
+            self.notify(f"Purged {count} dead session(s)")
+        else:
+            self.notify("No dead sessions found")
 
     def action_open_sort(self) -> None:
         """Open the sort picker popup."""
@@ -522,5 +586,10 @@ class SessionsDashboard(App):
         detail.update(Group(*parts))
 
 if __name__ == "__main__":
+    if "--reset" in sys.argv:
+        if STATUS_DIR.is_dir():
+            shutil.rmtree(STATUS_DIR)
+        STATUS_DIR.mkdir(parents=True, exist_ok=True)
+        print("cctop: session data cleared")
     app = SessionsDashboard()
     app.run()
