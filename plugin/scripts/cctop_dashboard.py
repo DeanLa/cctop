@@ -545,9 +545,6 @@ class SessionsDashboard(App):
     ]
 
     sort_mode: str = "activity"
-    _sessions: list[SessionInfo] = []
-    _last_health_check: float = 0.0
-    _last_health: HealthStatus | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -558,6 +555,9 @@ class SessionsDashboard(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._sessions: list[SessionInfo] = []
+        self._last_health_check: float = 0.0
+        self._last_health: HealthStatus | None = None
         table = self.query_one(DataTable)
         table.cursor_type = "row"
         table.add_columns("Slug", "Project", "Branch", "Status", "Model", "Ctx%", "Tokens", "Tools", "Files", "Agents", "Errors", "Turns", "StopRsn", "Duration", "Started", "Activity")
