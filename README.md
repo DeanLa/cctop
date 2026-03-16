@@ -8,7 +8,7 @@ Like `htop`, but for [Claude Code](https://docs.anthropic.com/en/docs/claude-cod
 
 ## Install
 
-Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [uv](https://docs.astral.sh/uv/).
+Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [uv](https://docs.astral.sh/uv/), and [jq](https://jqlang.github.io/jq/).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/DeanLa/cctop/main/install.sh | bash
@@ -20,11 +20,9 @@ Then launch from any terminal:
 cctop
 ```
 
-Or use the `/cctop` slash command from within Claude Code.
-
 ## Why
 
-If you're past the "one session at a time" stage but not running a fleet of headless agents, you're in the middle ground where most tools don't help. You have 4–20 sessions open across multiple projects, refactoring one repo while tests run in another, firing off a prompt in a third while waiting for a fourth to finish. You context-switch constantly, lose track of which tab is blocked on you, and forget what that session in the background was even doing.
+If you're past the "one session at a time" stage but not running a fleet of headless agents, you're in the middle ground where most tools don't help. You have 4-20 sessions open across multiple projects, refactoring one repo while tests run in another, firing off a prompt in a third while waiting for a fourth to finish. You context-switch constantly, lose track of which tab is blocked on you, and forget what that session in the background was even doing.
 
 cctop gives you one screen to see all of them.
 
@@ -45,19 +43,49 @@ cctop gives you one screen to see all of them.
 |--------|---------------|
 | **Slug** | Session nickname (custom title or first prompt) |
 | **Project** | Working directory name |
-| **Branch** | Git branch (truncated to 12 chars) |
+| **Branch** | Git branch (truncated to 20 chars) |
 | **Status** | idle, thinking, editing, running cmd, searching web, subagent, stale, ended |
-| **Model** | opus / sonnet / haiku |
+| **Model** | Model family and version (e.g. "sonnet 4.6", "opus 4.6") |
 | **Ctx%** | Context window usage percentage |
 | **Tokens** | Total tokens consumed (e.g. "145k") |
 | **Tools** | Tool call count |
-| **Turns** | Conversation turn count |
+| **Files** | Number of files edited |
+| **Agents** | Running subagents |
+| **Errors** | Error count (highlighted in red) |
+| **Turns** | Conversation turn count (user-assistant exchanges) |
+| **StopRsn** | Last stop reason (done, tool, limit) |
 | **Duration** | Elapsed time since session start (e.g. "1h23m") |
+| **Started** | Session start time (e.g. "14:30") |
 | **Activity** | Time since last event (e.g. "2m ago") |
 
 Highlight any row to see a detail panel with the full working directory, git branch, token breakdown, the last user prompt, and Claude's last response.
 
+### Session Lifecycle
+
 Sessions that go quiet for 1+ hour are marked stale. Sessions that end clean up after themselves. Sessions whose Claude process has exited (e.g. Ctrl+C) are automatically removed by the background poller via PID checks. Press `R` to manually purge dead sessions, or run `cctop --reset` to wipe all session data and start fresh.
+
+A health check bar may appear at the bottom of the dashboard when cctop detects a mismatch between tracked sessions and running Claude processes. This is normal if you had sessions running before installing cctop.
+
+## Troubleshooting
+
+**No sessions appear after install**
+- Make sure `jq` is installed (`jq --version`). The hook requires it and silently does nothing without it.
+- Only sessions started *after* installing cctop are tracked. Existing sessions won't appear until they are restarted.
+- Try running `cctop --reset` to clear stale data and start fresh.
+
+**Orange warning bar at the bottom**
+- "N sessions not tracked" means Claude processes are running that cctop doesn't know about. This is expected for sessions that started before cctop was installed.
+- "N stale sessions detected" means tracked sessions whose process has exited. Press `R` to purge them.
+
+## Uninstall
+
+Remove the plugin and CLI entry point:
+
+```bash
+rm -rf ~/.claude/plugins/cache/cctop
+rm -f ~/.local/bin/cctop
+rm -rf ~/.cctop
+```
 
 ## Contributing
 

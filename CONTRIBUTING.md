@@ -47,8 +47,6 @@ plugin/                        # Distribution files — only this directory gets
     launch-cctop.sh            # Convenience launcher (poller + dashboard)
   hooks/
     hooks.json                 # Registers the hook for 7 events
-  commands/
-    cctop.md                   # /cctop slash command
   .claude-plugin/
     plugin.json                # Plugin manifest
 bin/
