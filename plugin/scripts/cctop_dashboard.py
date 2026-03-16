@@ -85,6 +85,11 @@ STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "tool:Write": ("#ff8700", "editing"),
     "tool:Glob": ("cyan", "searching"),
     "tool:Grep": ("cyan", "searching"),
+    "tool:shell_command": ("green", "running cmd"),
+    "tool:list_mcp_resources": ("magenta", "mcp"),
+    "tool:list_mcp_resource_templates": ("magenta", "mcp"),
+    "tool:read_mcp_resource": ("magenta", "mcp"),
+    "tool:multi_tool_use.parallel": ("cyan", "parallel"),
     "ended": ("dim", "ended"),
 }
 
@@ -192,6 +197,7 @@ class SessionInfo:
     """Aggregated info for one Claude Code session."""
 
     session_id: str = ""
+    provider: str = "claude"
     cwd: str = ""
     status: str = ""
     last_activity: str = ""
@@ -222,6 +228,7 @@ class SessionInfo:
     subagent_output_tokens: int = 0
     subagent_cache_read_tokens: int = 0
     subagent_cache_creation_tokens: int = 0
+    context_window: int = CONTEXT_WINDOW
 
     @property
     def context_tokens(self) -> int:
@@ -274,6 +281,7 @@ def load_sessions() -> list[SessionInfo]:
         raw_pid = hook.get("pid")
         info = SessionInfo(
             session_id=sid,
+            provider=hook.get("provider", "claude"),
             cwd=hook.get("cwd", ""),
             status=hook.get("status", ""),
             last_activity=hook.get("last_activity", ""),
@@ -303,6 +311,7 @@ def load_sessions() -> list[SessionInfo]:
             subagent_output_tokens=poller.get("subagent_output_tokens", 0),
             subagent_cache_read_tokens=poller.get("subagent_cache_read_tokens", 0),
             subagent_cache_creation_tokens=poller.get("subagent_cache_creation_tokens", 0),
+            context_window=poller.get("context_window", CONTEXT_WINDOW),
         )
         sessions.append(info)
 
@@ -446,10 +455,11 @@ def get_claude_pids() -> set[int]:
 
 def check_session_health(sessions: list[SessionInfo], claude_pids: set[int]) -> HealthStatus:
     """Compare tracked sessions against live Claude processes."""
-    tracked_count = len(sessions)
+    claude_sessions = [s for s in sessions if s.provider == "claude"]
+    tracked_count = len(claude_sessions)
     stale_ids: list[str] = []
 
-    for s in sessions:
+    for s in claude_sessions:
         if s.pid is not None and s.pid > 0:
             if s.pid not in claude_pids:
                 stale_ids.append(s.session_id)
@@ -648,7 +658,7 @@ class SessionsDashboard(App):
         for s in ordered:
             project = s.project_name or (os.path.basename(s.cwd) if s.cwd else "")
             ctx = s.context_tokens
-            ctx_pct = f"{ctx * 100 // CONTEXT_WINDOW}%" if ctx else ""
+            ctx_pct = f"{ctx * 100 // s.context_window}%" if ctx and s.context_window else ""
             tokens = format_tokens(ctx)
             errors_cell = Text(str(s.error_count), style="red") if s.error_count else ""
             table.add_row(

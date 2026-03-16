@@ -27,9 +27,14 @@ import signal
 import subprocess
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 STATUS_DIR = Path.home() / ".cctop"
+CODEX_HOME = Path.home() / ".codex"
+CODEX_SESSIONS_DIR = CODEX_HOME / "sessions"
+CODEX_ARCHIVED_SESSIONS_DIR = CODEX_HOME / "archived_sessions"
+CODEX_SESSION_INDEX = CODEX_HOME / "session_index.jsonl"
 POLL_INTERVAL = 1.0
 
 _shutdown = False
@@ -176,6 +181,133 @@ def parse_new_lines(lines: list[str]) -> dict:
     return updates
 
 
+def parse_codex_new_lines(lines: list[str]) -> dict:
+    """Parse Codex transcript lines into the normalized poller fields."""
+    updates: dict = {}
+    turns_delta = 0
+    tool_count_delta = 0
+    error_count_delta = 0
+    latest_input = 0
+    latest_output = 0
+    latest_window = 0
+    latest_status = ""
+
+    for raw_line in lines:
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            obj = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+
+        record_type = obj.get("type", "")
+        payload = obj.get("payload") or {}
+
+        if record_type == "session_meta":
+            cwd = payload.get("cwd", "")
+            if cwd:
+                updates["cwd"] = cwd
+                updates["project_name"] = Path(cwd).name
+            started_at = payload.get("timestamp", "")
+            if started_at:
+                updates["started_at"] = started_at
+            model_provider = payload.get("model_provider", "")
+            if model_provider:
+                updates["model_provider"] = model_provider
+            continue
+
+        if record_type == "turn_context":
+            model = payload.get("model", "")
+            if model:
+                updates["model"] = model
+            cwd = payload.get("cwd", "")
+            if cwd:
+                updates["cwd"] = cwd
+                updates["project_name"] = Path(cwd).name
+            continue
+
+        if record_type == "event_msg":
+            event_type = payload.get("type", "")
+            if event_type == "task_started":
+                latest_status = "thinking"
+                if payload.get("model_context_window"):
+                    latest_window = payload["model_context_window"]
+            elif event_type == "task_complete":
+                latest_status = "idle"
+            elif event_type == "user_message":
+                message = payload.get("message", "")
+                if isinstance(message, str) and message.strip():
+                    turns_delta += 1
+                    updates["last_user_msg"] = message
+            elif event_type == "agent_message":
+                message = payload.get("message", "")
+                if isinstance(message, str) and message.strip():
+                    updates["last_assistant_msg"] = message
+            elif event_type == "token_count":
+                info = payload.get("info") or {}
+                total = info.get("total_token_usage") or {}
+                last = info.get("last_token_usage") or {}
+                latest_input = last.get("input_tokens", 0) + last.get("cached_input_tokens", 0)
+                latest_output = last.get("output_tokens", 0) + last.get("reasoning_output_tokens", 0)
+                updates["cumulative_input_tokens"] = total.get("input_tokens", 0)
+                updates["cumulative_output_tokens"] = total.get("output_tokens", 0)
+                updates["cumulative_cache_read_tokens"] = total.get("cached_input_tokens", 0)
+                updates["cumulative_cache_creation_tokens"] = 0
+                updates["reasoning_output_tokens"] = total.get("reasoning_output_tokens", 0)
+                latest_window = info.get("model_context_window", latest_window)
+            continue
+
+        if record_type != "response_item":
+            continue
+
+        item_type = payload.get("type", "")
+        if item_type == "function_call":
+            tool_count_delta += 1
+            latest_status = f"tool:{payload.get('name', '')}"
+        elif item_type == "function_call_output":
+            output = payload.get("output", "")
+            if isinstance(output, str) and "Exit code:" in output:
+                try:
+                    exit_code = int(output.split("Exit code:", 1)[1].splitlines()[0].strip())
+                except (ValueError, IndexError):
+                    exit_code = 0
+                if exit_code != 0:
+                    error_count_delta += 1
+            latest_status = "thinking"
+        elif item_type == "message":
+            if payload.get("role") == "assistant":
+                texts: list[str] = []
+                for block in payload.get("content", []):
+                    if isinstance(block, dict) and block.get("type") == "output_text":
+                        text = block.get("text", "")
+                        if text:
+                            texts.append(text)
+                if texts:
+                    updates["last_assistant_msg"] = "\n".join(texts).strip()
+
+    if latest_input:
+        updates["input_tokens"] = latest_input
+    if latest_output:
+        updates["output_tokens"] = latest_output
+    if latest_window:
+        updates["context_window"] = latest_window
+
+    updates["_status"] = latest_status
+    updates["_delta_turns"] = turns_delta
+    updates["_delta_tool_count"] = tool_count_delta
+    updates["_delta_files_edited"] = []
+    updates["_delta_subagent_count"] = 0
+    updates["_delta_error_count"] = error_count_delta
+    updates["_delta_cumulative_input"] = 0
+    updates["_delta_cumulative_output"] = 0
+    updates["_delta_cumulative_cache_read"] = 0
+    updates["_delta_cumulative_cache_creation"] = 0
+    updates["_delta_reasoning_output"] = 0
+
+    return updates
+
+
 # --- File I/O ---
 
 
@@ -198,6 +330,13 @@ def write_json(path: Path, data: dict) -> None:
             os.unlink(tmp)
         except OSError:
             pass
+
+
+def upsert_status_file(path: Path, updates: dict) -> None:
+    """Merge updates into an existing JSON file and write atomically."""
+    current = read_json(path) or {}
+    current.update(updates)
+    write_json(path, current)
 
 
 CLEANUP_INTERVAL = 30.0
@@ -254,9 +393,19 @@ def cleanup_dead_sessions() -> int:
                 pass
 
         pid = hook.get("pid")
+        provider = hook.get("provider", "claude")
         is_dead = False
 
-        if pid is not None and isinstance(pid, int) and pid > 0:
+        if provider == "codex":
+            last_activity = hook.get("last_activity", "")
+            if last_activity:
+                try:
+                    ts = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
+                    age = (datetime.now(timezone.utc) - ts).total_seconds()
+                    is_dead = age > STALE_SECONDS
+                except (ValueError, TypeError):
+                    pass
+        elif pid is not None and isinstance(pid, int) and pid > 0:
             # PID-based check
             is_dead = not _is_pid_alive(pid)
         else:
@@ -284,6 +433,127 @@ def cleanup_dead_sessions() -> int:
             removed += 1
 
     return removed
+
+
+def read_codex_session_index() -> list[dict]:
+    """Read recent Codex session index entries."""
+    if not CODEX_SESSION_INDEX.is_file():
+        return []
+
+    entries: list[dict] = []
+    try:
+        lines = CODEX_SESSION_INDEX.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return entries
+
+    now = datetime.now(timezone.utc)
+    for line in lines:
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        sid = obj.get("id", "")
+        updated_at = obj.get("updated_at", "")
+        if not sid or not updated_at:
+            continue
+        try:
+            age = (now - datetime.fromisoformat(updated_at.replace("Z", "+00:00"))).total_seconds()
+        except (ValueError, TypeError):
+            continue
+        if age > STALE_SECONDS:
+            continue
+        entries.append(obj)
+
+    entries.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+    return entries
+
+
+def find_codex_transcript_path(session_id: str, updated_at: str) -> str:
+    """Resolve the Codex transcript path for a session ID."""
+    try:
+        dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        dt = None
+
+    search_roots: list[Path] = []
+    if dt is not None:
+        search_roots.append(CODEX_SESSIONS_DIR / dt.strftime("%Y") / dt.strftime("%m") / dt.strftime("%d"))
+    search_roots.extend([CODEX_SESSIONS_DIR, CODEX_ARCHIVED_SESSIONS_DIR])
+
+    pattern = f"*{session_id}.jsonl"
+    for root in search_roots:
+        if not root.exists():
+            continue
+        matches = sorted(root.glob(pattern))
+        if matches:
+            return str(matches[-1])
+    return ""
+
+
+def discover_codex_sessions() -> None:
+    """Create or refresh normalized status files for recent Codex sessions."""
+    for entry in read_codex_session_index():
+        sid = entry["id"]
+        transcript_path = find_codex_transcript_path(sid, entry["updated_at"])
+        if not transcript_path:
+            continue
+
+        hook_fp = STATUS_DIR / f"{sid}.json"
+        existing = read_json(hook_fp) or {}
+        session_data = read_json_from_transcript(transcript_path)
+        if session_data is None:
+            session_data = {}
+
+        cwd = session_data.get("cwd", existing.get("cwd", ""))
+        project_name = Path(cwd).name if cwd else ""
+        started_at = session_data.get("started_at", existing.get("started_at", entry["updated_at"]))
+        model = session_data.get("model", existing.get("model", ""))
+        last_status = existing.get("status", "idle")
+        if not existing:
+            last_status = "started"
+
+        upsert_status_file(hook_fp, {
+            "provider": "codex",
+            "session_id": sid,
+            "cwd": cwd,
+            "status": last_status,
+            "last_activity": entry["updated_at"],
+            "started_at": started_at,
+            "transcript_path": transcript_path,
+            "model": model,
+            "running_agents": 0,
+            "tool_count": existing.get("tool_count", 0),
+            "project_name": project_name,
+        })
+
+
+def read_json_from_transcript(transcript_path: str) -> dict | None:
+    """Read minimal session metadata from the first Codex transcript lines."""
+    try:
+        with open(transcript_path, "r", encoding="utf-8", errors="replace") as fh:
+            for _ in range(8):
+                line = fh.readline()
+                if not line:
+                    break
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("type") == "session_meta":
+                    payload = obj.get("payload") or {}
+                    return {
+                        "cwd": payload.get("cwd", ""),
+                        "started_at": payload.get("timestamp", ""),
+                    }
+                if obj.get("type") == "turn_context":
+                    payload = obj.get("payload") or {}
+                    return {
+                        "cwd": payload.get("cwd", ""),
+                        "model": payload.get("model", ""),
+                    }
+    except OSError:
+        return None
+    return None
 
 
 def read_new_jsonl_lines(
@@ -487,6 +757,7 @@ def _accumulate_deltas(poller_data: dict, updates: dict) -> None:
     poller_data["cumulative_output_tokens"] = poller_data.get("cumulative_output_tokens", 0) + updates.pop("_delta_cumulative_output", 0)
     poller_data["cumulative_cache_read_tokens"] = poller_data.get("cumulative_cache_read_tokens", 0) + updates.pop("_delta_cumulative_cache_read", 0)
     poller_data["cumulative_cache_creation_tokens"] = poller_data.get("cumulative_cache_creation_tokens", 0) + updates.pop("_delta_cumulative_cache_creation", 0)
+    poller_data["reasoning_output_tokens"] = poller_data.get("reasoning_output_tokens", 0) + updates.pop("_delta_reasoning_output", 0)
 
     # files_edited: merge new paths into existing list (deduplicated)
     new_files = updates.pop("_delta_files_edited", [])
@@ -498,8 +769,9 @@ def _accumulate_deltas(poller_data: dict, updates: dict) -> None:
 
 def poll_once() -> None:
     """Process all sessions once."""
-    if not STATUS_DIR.is_dir():
-        return
+    STATUS_DIR.mkdir(parents=True, exist_ok=True)
+
+    discover_codex_sessions()
 
     for hook_fp in STATUS_DIR.glob("*.json"):
         # Skip poller files (*.poller.json)
@@ -514,6 +786,7 @@ def poll_once() -> None:
         transcript_path = hook_data.get("transcript_path", "")
         if not transcript_path:
             continue
+        provider = hook_data.get("provider", "claude")
 
         # Read our own poller file
         poller_fp = STATUS_DIR / f"{sid}.poller.json"
@@ -546,7 +819,10 @@ def poll_once() -> None:
             )}
 
         if lines:
-            updates = parse_new_lines(lines)
+            if provider == "codex":
+                updates = parse_codex_new_lines(lines)
+            else:
+                updates = parse_new_lines(lines)
 
             # Enrich git branch: resolve detached HEAD, detect worktrees.
             # For worktrees, prefix branch with 🌿 and override project_name
@@ -564,9 +840,37 @@ def poll_once() -> None:
                         updates["git_branch"] = "\U0001f33f " + updates["git_branch"]
                         updates["project_name"] = repo_name
 
+            status_update = updates.pop("_status", "")
+            cwd_update = updates.get("cwd", "")
+            started_at_update = updates.get("started_at", "")
+
             _accumulate_deltas(poller_data, updates)
             poller_data.update(updates)
             changed = True
+
+            if provider == "codex":
+                hook_updates = {
+                    "last_activity": hook_data.get("last_activity", ""),
+                }
+                if status_update:
+                    hook_updates["status"] = status_update
+                if cwd_update:
+                    hook_updates["cwd"] = cwd_update
+                if started_at_update:
+                    hook_updates["started_at"] = started_at_update
+                if updates.get("model"):
+                    hook_updates["model"] = updates["model"]
+                line_ts = ""
+                for line in reversed(lines):
+                    try:
+                        line_ts = json.loads(line).get("timestamp", "")
+                    except json.JSONDecodeError:
+                        continue
+                    if line_ts:
+                        break
+                if line_ts:
+                    hook_updates["last_activity"] = line_ts
+                upsert_status_file(hook_fp, hook_updates)
 
         # Restore frozen counters after full re-read so only the targeted
         # fields (tool_count for migration, last_user_msg for bad-msg fix)

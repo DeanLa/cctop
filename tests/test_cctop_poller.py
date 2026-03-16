@@ -17,6 +17,7 @@ _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 
 parse_new_lines = _mod.parse_new_lines
+parse_codex_new_lines = _mod.parse_codex_new_lines
 resolve_git_branch = _mod.resolve_git_branch
 detect_worktree = _mod.detect_worktree
 
@@ -124,6 +125,81 @@ class TestTurnCounting:
         result = parse_new_lines(lines)
         assert result["_delta_turns"] == 3
         assert result["last_user_msg"] == "Third question"
+
+
+class TestCodexParsing:
+    """Verify Codex transcript parsing maps into normalized fields."""
+
+    def test_codex_user_tool_and_completion(self):
+        lines = [
+            json.dumps({
+                "type": "session_meta",
+                "payload": {
+                    "cwd": "D:\\repo",
+                    "timestamp": "2026-03-16T20:00:00Z",
+                    "model_provider": "openai",
+                },
+            }),
+            json.dumps({
+                "type": "turn_context",
+                "payload": {"cwd": "D:\\repo", "model": "gpt-5.4"},
+            }),
+            json.dumps({
+                "type": "event_msg",
+                "payload": {"type": "user_message", "message": "check the bug"},
+            }),
+            json.dumps({
+                "type": "response_item",
+                "payload": {"type": "function_call", "name": "shell_command"},
+            }),
+            json.dumps({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "output": "Exit code: 1\nOutput:\nboom",
+                },
+            }),
+            json.dumps({
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1200,
+                            "cached_input_tokens": 300,
+                            "output_tokens": 90,
+                            "reasoning_output_tokens": 10,
+                        },
+                        "last_token_usage": {
+                            "input_tokens": 400,
+                            "cached_input_tokens": 50,
+                            "output_tokens": 20,
+                            "reasoning_output_tokens": 5,
+                        },
+                        "model_context_window": 258400,
+                    },
+                },
+            }),
+            json.dumps({
+                "type": "event_msg",
+                "payload": {"type": "task_complete"},
+            }),
+        ]
+
+        result = parse_codex_new_lines(lines)
+
+        assert result["cwd"] == "D:\\repo"
+        assert result["project_name"] == "repo"
+        assert result["model"] == "gpt-5.4"
+        assert result["last_user_msg"] == "check the bug"
+        assert result["input_tokens"] == 450
+        assert result["output_tokens"] == 25
+        assert result["cumulative_input_tokens"] == 1200
+        assert result["cumulative_cache_read_tokens"] == 300
+        assert result["_delta_turns"] == 1
+        assert result["_delta_tool_count"] == 1
+        assert result["_delta_error_count"] == 1
+        assert result["_status"] == "idle"
 
 
 # --- resolve_git_branch tests ---

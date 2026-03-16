@@ -52,6 +52,7 @@ def _ago_iso(minutes: int) -> str:
 def write_fake_session(tmpdir: Path, sid: str, *,
                        cwd: str = "/tmp/proj",
                        status: str = "idle",
+                       provider: str = "claude",
                        model: str = "claude-sonnet-4-6-20260301",
                        turns: int = 5,
                        tool_count: int = 10,
@@ -72,6 +73,7 @@ def write_fake_session(tmpdir: Path, sid: str, *,
     """Write a pair of hook + poller JSON files into tmpdir."""
     hook = {
         "session_id": sid,
+        "provider": provider,
         "cwd": cwd,
         "status": status,
         "last_activity": last_activity or _now_iso(),
@@ -168,6 +170,10 @@ def test_friendly_model_name_unknown():
 
 def test_friendly_model_name_empty():
     assert friendly_model_name("") == ""
+
+
+def test_friendly_model_name_gpt5():
+    assert friendly_model_name("gpt-5.4") == "gpt-5.4"
 
 
 # --- format_start_time tests ---
@@ -625,6 +631,18 @@ def test_health_no_pid_sessions_ignored():
     health = check_session_health(sessions, pids)
     assert health.stale_ids == []
     # live_tracked = 2 - 0 = 2, untracked = max(0, 1 - 2) = 0
+    assert health.untracked_count == 0
+
+
+def test_health_ignores_codex_sessions():
+    """Codex sessions should not affect Claude process health checks."""
+    sessions = [
+        SessionInfo(session_id="claude-a", provider="claude", pid=100),
+        SessionInfo(session_id="codex-a", provider="codex", pid=None),
+    ]
+    health = check_session_health(sessions, {100})
+    assert not health.has_mismatch
+    assert health.stale_ids == []
     assert health.untracked_count == 0
 
 

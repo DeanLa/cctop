@@ -2,7 +2,7 @@
 
 ![cctop](media/logo-small.png)
 
-Like `htop`, but for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A live terminal dashboard that shows all your sessions at a glance, status, context usage, tokens, and latest messages.
+Like `htop`, but for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and Codex. A live terminal dashboard that shows all your sessions at a glance, status, context usage, tokens, and latest messages.
 
 ![cctop demo](media/cctop-demo.gif)
 
@@ -25,6 +25,8 @@ cctop
 If you're past the "one session at a time" stage but not running a fleet of headless agents, you're in the middle ground where most tools don't help. You have 4-20 sessions open across multiple projects, refactoring one repo while tests run in another, firing off a prompt in a third while waiting for a fourth to finish. You context-switch constantly, lose track of which tab is blocked on you, and forget what that session in the background was even doing.
 
 cctop gives you one screen to see all of them.
+
+Claude sessions are tracked through the plugin hooks. Codex sessions are discovered directly from local Codex session transcripts under `~/.codex/`, so they appear automatically once the dashboard is running.
 
 ## What You See
 
@@ -57,6 +59,8 @@ cctop gives you one screen to see all of them.
 | **Duration** | Elapsed time since session start (e.g. "1h23m") |
 | **Started** | Session start time (e.g. "14:30") |
 | **Activity** | Time since last event (e.g. "2m ago") |
+
+For Codex sessions, live status and token usage are inferred from the Codex transcript stream. File edit counts and subagent metrics are currently Claude-only.
 
 Highlight any row to see a detail panel with the full working directory, git branch, token breakdown, files edited, subagent and error counts, the last user prompt, and Claude's last response.
 

@@ -30,11 +30,11 @@ Hook (event-driven)  ──► ~/.cctop/<id>.json ◄── Poller (1s loop)
 
 **Hook** (`plugin/scripts/cctop-hook.sh`) — fires on 7 Claude Code events (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, SubagentStop, SessionEnd). Writes status, current tool, timestamps, tool count, and transcript path. Stays fast (<50ms).
 
-**Poller** (`plugin/scripts/cctop-poller.py`) — background process that incrementally reads JSONL transcripts using byte offsets. Extracts custom title, slug, model, git branch, token usage, messages, turns, files edited, subagent count, errors, and stop reason. Also aggregates subagent transcript tokens.
+**Poller** (`plugin/scripts/cctop-poller.py`) — background process that incrementally reads JSONL transcripts using byte offsets. For Claude, it enriches hook-written sessions with title, slug, model, git branch, token usage, messages, turns, files edited, subagent count, errors, and stop reason. For Codex, it auto-discovers recent sessions from `~/.codex/session_index.jsonl`, normalizes them into the same `~/.cctop/` contract, and parses token/message/tool data from Codex transcripts.
 
 **Dashboard** (`plugin/scripts/cctop_dashboard.py`) — pure read-only Textual TUI. Reads `~/.cctop/` JSON files only. No JSONL parsing, no writes. Refreshes every 500ms.
 
-The `~/.cctop/` directory is the API contract between all three components.
+The `~/.cctop/` directory is the API contract between all three components, regardless of provider.
 
 ## Project Structure
 
