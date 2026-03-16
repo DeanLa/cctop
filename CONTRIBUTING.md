@@ -8,15 +8,17 @@ cd cctop
 ./install.sh --dev
 ```
 
-`--dev` symlinks to your local repo so changes take effect immediately (after reinstalling the plugin). `--prod` copies files into the plugin cache from the GitHub repo.
+`--dev` symlinks to your local repo so changes take effect immediately. `--prod` copies the standalone runtime and installs the CLI entrypoint from the GitHub repo.
 
-After editing any file under `plugin/`, reinstall:
+If Claude is installed, `install.sh` also refreshes the Claude plugin. If Claude is not installed, the standalone runtime is still installed and is enough for Codex session monitoring.
+
+After editing any file under `plugin/` or `bin/`, reinstall:
 
 ```bash
 ./install.sh --dev
 ```
 
-New Claude Code sessions pick up the changes; existing sessions keep the old version.
+New Claude Code sessions pick up the changes; existing Claude sessions keep the old version. Codex sessions are discovered from local transcript files, so no Codex-side reinstall is required beyond refreshing the cctop runtime.
 
 ## Architecture
 

@@ -8,7 +8,11 @@ Like `htop`, but for [Claude Code](https://docs.anthropic.com/en/docs/claude-cod
 
 ## Install
 
-Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [uv](https://docs.astral.sh/uv/), and [jq](https://jqlang.github.io/jq/).
+Requires [uv](https://docs.astral.sh/uv/).
+
+Optional:
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for Claude session tracking via plugin hooks
+- [jq](https://jqlang.github.io/jq/) for the Claude hook
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/DeanLa/cctop/main/install.sh | bash
@@ -27,6 +31,8 @@ If you're past the "one session at a time" stage but not running a fleet of head
 cctop gives you one screen to see all of them.
 
 Claude sessions are tracked through the plugin hooks. Codex sessions are discovered directly from local Codex session transcripts under `~/.codex/`, so they appear automatically once the dashboard is running.
+
+If Claude is installed, `install.sh` also installs the Claude plugin automatically. If Claude is not installed, cctop still installs a standalone runtime and can monitor Codex sessions.
 
 ## What You See
 
@@ -73,8 +79,9 @@ A health check bar may appear at the bottom of the dashboard when cctop detects 
 ## Troubleshooting
 
 **No sessions appear after install**
-- Make sure `jq` is installed (`jq --version`). The hook requires it and silently does nothing without it.
-- Only sessions started *after* installing cctop are tracked. Existing sessions won't appear until they are restarted.
+- For Claude sessions, make sure `jq` is installed (`jq --version`). The hook requires it and silently does nothing without it.
+- Claude sessions started *before* installing the plugin won't appear until they are restarted.
+- For Codex sessions, make sure `~/.codex/session_index.jsonl` and `~/.codex/sessions/` exist and contain recent sessions.
 - Try running `cctop --reset` to clear stale data and start fresh.
 
 **Orange warning bar at the bottom**
@@ -83,10 +90,11 @@ A health check bar may appear at the bottom of the dashboard when cctop detects 
 
 ## Uninstall
 
-Remove the plugin and CLI entry point:
+Remove the plugin, standalone runtime, and CLI entry point:
 
 ```bash
 rm -rf ~/.claude/plugins/cache/cctop
+rm -rf ~/.local/share/cctop
 rm -f ~/.local/bin/cctop
 rm -rf ~/.cctop
 ```
