@@ -12,7 +12,7 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **6.** Group/collapse sessions by project directory `PR-M`
 - [x] **7.** Show full model name in `Model` column (e.g. `claude-sonnet-4-6` instead of truncated) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
 - [x] **8.** Add `Started` column showing session start time `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
-- [ ] **9.** Fix `Turns` count, count user messages instead of tool calls (a turn is a user-assistant exchange, not every tool invocation) `PR-C`
+- [x] **9.** Fix `Turns` count, count user messages instead of tool calls (a turn is a user-assistant exchange, not every tool invocation)
 
 ## Detail Panel
 - [x] **10.** The user message is not formatted markdown like the assistant message, make them consistent `PR-B`
@@ -21,13 +21,15 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [x] **13.** Wrap detail panel text at window width (with margin) instead of fixed 100 chars
 - [ ] **14.** Parse system-injected user messages (e.g. `<task-notification>`) and display them nicely, show "Subagent completed: <summary>" instead of hiding them entirely `PR-H`
 - [x] **15.** Bug: detail panel still shows last selected session after all sessions end, should clear when no active sessions remain `PR-B`
+- [ ] **34.** Recent activity log: timestamped feed of recent events (tool calls, messages) for the selected session
+- [ ] **35.** Session metadata section: display relevant metadata from the session-status JSON
 
 ## Debugging
 - [ ] **16.** Debug mode, log all hook events with full JSON stdin to a file for troubleshooting `PR-D`
 
 ## Session Actions
 - [ ] **17.** Investigate: can we kill a session from the dashboard? `PR-F`
-- [ ] **18.** Add rename session action from the dashboard `PR-F`
+- [ ] **18.** Add rename session action from the dashboard, see [`plans/rename-session-externally.md`](plans/rename-session-externally.md) for the approach `PR-F`
 - [x] **19.** Strong refresh: keybinding (e.g. Shift+R) and CLI flag (`cctop --reset`) that wipes `~/.cctop/`, re-scans all sessions from scratch
 
 ## Session Lifecycle
@@ -38,12 +40,16 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
 ## UI & Theming
 - [ ] **24.** Persist selected theme to disk so it survives restarts (config file) `PR-J`
+- [ ] **36.** Config file in `~/.cctop/` for settings like stale threshold, theme, sort behavior, etc.
+- [ ] **37.** Group columns by functionality (like sort behavior), make column groups togglable or reorderable
 
 ## Packaging & Distribution
 - [x] **25.** Rename package to `cctop`, plugin name, slash command, and callable as `cctop` from terminal
 - [x] **26.** Create `~/bin/cctop` CLI entry point
 - [x] **27.** Create a git repo and push to GitHub
 - [ ] **28.** Create a demo/promo video with Remotion *(standalone)*
+- [ ] **38.** Support versioning: plugin and CLI app should share the same version, tag releases in git
+- [ ] **39.** Maintain a `CHANGELOG.md` with entries for each release, generated from commit messages or PR descriptions, maintained by Claude automatically
 
 ## Commands
 - [ ] **29.** `/register` slash command, if the current session is not tracked by cctop (e.g. plugin was installed after the session started, or a bug), manually register it by writing the session JSON into `~/.cctop/` so the poller picks it up. **Approach:** encode the current CWD to derive the project directory (`~/.claude/projects/<encoded>/`), scan it for `.jsonl` transcript files, cross-reference against existing `~/.cctop/*.json` to find untracked sessions, then identify the active one by matching `claude` process CWDs (via `ps` or `lsof`). No CLI command to list sessions exists, and Claude doesn't keep transcript files open as handles, so process CWD matching is the way to link PID → session. `PR-G`
