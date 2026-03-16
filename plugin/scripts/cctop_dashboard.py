@@ -13,6 +13,7 @@ from __future__ import annotations
 # --- Imports ---
 import json
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -42,6 +43,8 @@ SORT_OPTIONS: list[tuple[str, str]] = [
     ("turns", "Turns"),
     ("tokens", "Tokens"),
     ("tools", "Tool Count"),
+    ("files", "Files Edited"),
+    ("agents", "Running Agents"),
     ("errors", "Errors"),
 ]
 
@@ -95,6 +98,53 @@ def shorten_model(model: str) -> str:
         if key in model:
             return short
     return model[:12] if model else ""
+
+
+def friendly_model_name(model: str) -> str:
+    """Human-friendly short name for the table column.
+
+    E.g. "claude-sonnet-4-6-20260301" → "sonnet 4.6",
+         "claude-opus-4-6-v1[1m]" → "opus 4.6",
+         "claude-haiku-4-5-20251001" → "haiku 4.5".
+    Falls back to first 12 chars for unknown models.
+    """
+    m = re.match(r"claude-(\w+)-(\d+)-(\d+)", model)
+    if m:
+        family = m.group(1)
+        major = m.group(2)
+        minor = m.group(3)
+        return f"{family} {major}.{minor}"
+    return model[:12] if model else ""
+
+
+def format_start_time(iso_str: str) -> str:
+    """Convert ISO UTC timestamp to local time display.
+
+    Returns "14:30" for today, "Mar 15 14:30" for other days.
+    """
+    if not iso_str:
+        return ""
+    try:
+        ts = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        local = ts.astimezone()
+        now_local = datetime.now().astimezone()
+        if local.date() == now_local.date():
+            return local.strftime("%H:%M")
+        return local.strftime("%b %d %H:%M")
+    except (ValueError, TypeError):
+        return ""
+
+
+def format_stop_reason(reason: str) -> str:
+    """Map API stop reasons to short labels."""
+    if not reason:
+        return ""
+    mapping = {
+        "end_turn": "done",
+        "tool_use": "tool",
+        "max_tokens": "limit",
+    }
+    return mapping.get(reason, reason)
 
 
 # Per-model rates: (input_per_1M, output_per_1M, cache_read_per_1M, cache_creation_per_1M)
@@ -211,6 +261,7 @@ class SessionInfo:
     subagent_count: int = 0
     error_count: int = 0
     stop_reason: str = ""
+    running_agents: int = 0
     cumulative_input_tokens: int = 0
     cumulative_output_tokens: int = 0
     cumulative_cache_read_tokens: int = 0
@@ -298,6 +349,7 @@ def load_sessions() -> list[SessionInfo]:
             subagent_count=poller.get("subagent_count", 0),
             error_count=poller.get("error_count", 0),
             stop_reason=poller.get("stop_reason", ""),
+            running_agents=hook.get("running_agents", 0),
             cumulative_input_tokens=poller.get("cumulative_input_tokens", 0),
             cumulative_output_tokens=poller.get("cumulative_output_tokens", 0),
             cumulative_cache_read_tokens=poller.get("cumulative_cache_read_tokens", 0),
@@ -443,7 +495,7 @@ class SessionsDashboard(App):
     def on_mount(self) -> None:
         table = self.query_one(DataTable)
         table.cursor_type = "row"
-        table.add_columns("Slug", "Project", "Branch", "Status", "Model", "Ctx%", "Tokens", "Tools", "Turns", "Duration", "Activity")
+        table.add_columns("Slug", "Project", "Branch", "Status", "Model", "Ctx%", "Tokens", "Tools", "Files", "Agents", "Errors", "Turns", "StopRsn", "Duration", "Started", "Activity")
         self.refresh_data()
         self.set_interval(0.5, self.refresh_data)
 
@@ -492,6 +544,10 @@ class SessionsDashboard(App):
             return s.context_tokens
         if self.sort_mode == "tools":
             return s.tool_count
+        if self.sort_mode == "files":
+            return len(s.files_edited) if s.files_edited else 0
+        if self.sort_mode == "agents":
+            return s.running_agents
         if self.sort_mode == "errors":
             return s.error_count
         # activity — most recent first
@@ -508,24 +564,30 @@ class SessionsDashboard(App):
                 pass
         table.clear()
         # Numeric/time sorts: largest first; alphabetical sorts: A-Z
-        reverse = self.sort_mode in ("activity", "duration", "turns", "tokens", "tools", "errors")
+        reverse = self.sort_mode in ("activity", "duration", "turns", "tokens", "tools", "files", "agents", "errors")
         ordered = sorted(self._sessions, key=self._sort_key, reverse=reverse)
         for s in ordered:
             project = os.path.basename(s.cwd) if s.cwd else ""
             ctx = s.context_tokens
             ctx_pct = f"{ctx * 100 // CONTEXT_WINDOW}%" if ctx else ""
             tokens = format_tokens(ctx)
+            errors_cell = Text(str(s.error_count), style="red") if s.error_count else ""
             table.add_row(
                 Text.assemble(("● ", "#e0af68"), s.custom_title) if s.custom_title else Text.assemble(("○ ", "dim"), s.session_id[:8]),
                 project,
                 s.git_branch[:12],
                 styled_status(s.status, s.last_activity),
-                shorten_model(s.model),
+                friendly_model_name(s.model),
                 ctx_pct,
                 tokens,
                 str(s.tool_count) if s.tool_count else "",
+                str(len(s.files_edited)) if s.files_edited else "",
+                str(s.running_agents) if s.running_agents else "",
+                errors_cell,
                 str(s.turns) if s.turns else "",
+                format_stop_reason(s.stop_reason),
                 format_duration(s.started_at),
+                format_start_time(s.started_at),
                 format_relative_time(s.last_activity),
                 key=s.session_id,
             )
@@ -566,6 +628,8 @@ class SessionsDashboard(App):
 
         # Info metadata
         meta_parts: list[str] = []
+        if session.model:
+            meta_parts.append(f"Model: {session.model}")
         if session.files_edited:
             n = len(session.files_edited)
             meta_parts.append(f"{n} file{'s' if n != 1 else ''} edited")
