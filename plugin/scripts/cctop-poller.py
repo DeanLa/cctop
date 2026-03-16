@@ -554,9 +554,10 @@ def poll_once() -> None:
             if "git_branch" in updates:
                 cwd = hook_data.get("cwd", "")
                 if updates["git_branch"] == "HEAD":
-                    resolved = resolve_git_branch(cwd)
-                    if resolved:
-                        updates["git_branch"] = resolved
+                    # resolve_git_branch returns None only when not a git
+                    # repo (rev-parse --short HEAD always succeeds otherwise),
+                    # so clearing to "" is correct for non-repo directories.
+                    updates["git_branch"] = resolve_git_branch(cwd) or ""
                 if cwd:
                     repo_name = detect_worktree(cwd)
                     if repo_name and updates["git_branch"]:
