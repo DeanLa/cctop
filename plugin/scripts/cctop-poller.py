@@ -201,7 +201,7 @@ def write_json(path: Path, data: dict) -> None:
 
 CLEANUP_INTERVAL = 30.0
 GRACE_PERIOD = 180  # 3 minutes — don't nuke sessions still spinning up
-STALE_SECONDS = 5 * 60
+STALE_SECONDS = 60 * 60
 
 
 def _is_pid_alive(pid: int) -> bool:

@@ -33,7 +33,7 @@ from textual.widgets.option_list import Option
 
 STATUS_DIR = Path.home() / ".cctop"
 CONTEXT_WINDOW = 200_000
-STALE_SECONDS = 5 * 60
+STALE_SECONDS = 60 * 60
 SORT_OPTIONS: list[tuple[str, str]] = [
     ("activity", "Last Activity"),
     ("slug", "Name"),
