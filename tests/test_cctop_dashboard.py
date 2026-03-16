@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 from datetime import datetime, timezone, timedelta
 from io import StringIO
@@ -22,7 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "plugin" / "scri
 
 from cctop_dashboard import (
     SessionsDashboard,
+    SessionInfo,
     SortPicker,
+    HealthStatus,
     _render_message,
     format_tokens,
     format_relative_time,
@@ -30,6 +33,8 @@ from cctop_dashboard import (
     friendly_model_name,
     format_start_time,
     format_stop_reason,
+    get_claude_pids,
+    check_session_health,
     purge_dead_sessions,
     STATUS_DIR,
 )
@@ -477,3 +482,229 @@ async def test_detail_panel_clears_when_sessions_removed(fake_status_dir):
         await pilot.pause()
         # Detail should now be empty
         assert str(detail.content) == ""
+
+
+# --- get_claude_pids() unit tests ---
+
+
+def test_get_claude_pids_basic():
+    """Real claude sessions should be included."""
+    ps_output = (
+        "  PID COMMAND\n"
+        " 1234 /usr/local/bin/claude\n"
+        " 5678 /opt/homebrew/bin/claude -r\n"
+    )
+    with patch("cctop_dashboard.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=ps_output, stderr=""
+        )
+        pids = get_claude_pids()
+    assert pids == {1234, 5678}
+
+
+def test_get_claude_pids_excludes_desktop_app():
+    """Claude.app processes should be excluded."""
+    ps_output = (
+        "  PID COMMAND\n"
+        " 1234 /Applications/Claude.app/Contents/MacOS/Claude\n"
+        " 5678 /usr/local/bin/claude\n"
+    )
+    with patch("cctop_dashboard.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=ps_output, stderr=""
+        )
+        pids = get_claude_pids()
+    assert pids == {5678}
+
+
+def test_get_claude_pids_excludes_teammates():
+    """Teammate subagents (--parent-session-id) should be excluded."""
+    ps_output = (
+        "  PID COMMAND\n"
+        " 1234 /usr/local/bin/claude --parent-session-id abc123\n"
+        " 5678 /usr/local/bin/claude\n"
+    )
+    with patch("cctop_dashboard.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=ps_output, stderr=""
+        )
+        pids = get_claude_pids()
+    assert pids == {5678}
+
+
+def test_get_claude_pids_excludes_mcp_and_uvx():
+    """MCP servers and uvx processes should be excluded."""
+    ps_output = (
+        "  PID COMMAND\n"
+        " 1000 /usr/local/bin/claude\n"
+        " 2000 mcp-server-claude --port 3000\n"
+        " 3000 uvx claude-mcp\n"
+        " 4000 caffeinate -w 1000\n"
+    )
+    with patch("cctop_dashboard.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=ps_output, stderr=""
+        )
+        pids = get_claude_pids()
+    assert pids == {1000}
+
+
+def test_get_claude_pids_handles_subprocess_error():
+    """Should return empty set if ps fails."""
+    with patch("cctop_dashboard.subprocess.run", side_effect=OSError("no ps")):
+        pids = get_claude_pids()
+    assert pids == set()
+
+
+def test_get_claude_pids_excludes_non_claude_basename():
+    """Processes where basename is not 'claude' should be excluded."""
+    ps_output = (
+        "  PID COMMAND\n"
+        " 1000 /usr/local/bin/claude\n"
+        " 2000 /usr/local/bin/claude-dev\n"
+        " 3000 python claude_helper.py\n"
+    )
+    with patch("cctop_dashboard.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=ps_output, stderr=""
+        )
+        pids = get_claude_pids()
+    assert pids == {1000}
+
+
+# --- check_session_health() unit tests ---
+
+
+def test_health_all_live():
+    """All sessions have live PIDs, no warnings."""
+    sessions = [
+        SessionInfo(session_id="a", pid=100),
+        SessionInfo(session_id="b", pid=200),
+    ]
+    pids = {100, 200}
+    health = check_session_health(sessions, pids)
+    assert not health.has_mismatch
+    assert health.stale_ids == []
+    assert health.untracked_count == 0
+    assert health.message == ""
+
+
+def test_health_stale_sessions():
+    """Sessions with dead PIDs should appear in stale_ids."""
+    sessions = [
+        SessionInfo(session_id="a", pid=100),
+        SessionInfo(session_id="b", pid=200),
+    ]
+    pids = {100}  # PID 200 is dead
+    health = check_session_health(sessions, pids)
+    assert health.has_mismatch
+    assert health.stale_ids == ["b"]
+    assert "1 stale session" in health.message
+
+
+def test_health_untracked_processes():
+    """More processes than tracked sessions, untracked_count > 0."""
+    sessions = [
+        SessionInfo(session_id="a", pid=100),
+    ]
+    pids = {100, 200, 300}  # 2 extra processes
+    health = check_session_health(sessions, pids)
+    assert health.has_mismatch
+    assert health.untracked_count == 2
+    assert "2 sessions not tracked" in health.message
+
+
+def test_health_mixed_scenario():
+    """Both stale sessions and untracked processes."""
+    sessions = [
+        SessionInfo(session_id="a", pid=100),
+        SessionInfo(session_id="b", pid=200),  # dead
+        SessionInfo(session_id="c", pid=300),  # dead
+    ]
+    pids = {100, 400, 500}  # 200 and 300 are gone, 400 and 500 are new
+    health = check_session_health(sessions, pids)
+    assert health.has_mismatch
+    assert set(health.stale_ids) == {"b", "c"}
+    # live_tracked = 3 - 2 = 1, untracked = 3 - 1 = 2
+    assert health.untracked_count == 2
+    msg = health.message
+    assert "stale" in msg
+    assert "not tracked" in msg
+
+
+def test_health_no_pid_sessions_ignored():
+    """Sessions without a PID field should not be flagged as stale."""
+    sessions = [
+        SessionInfo(session_id="a", pid=None),
+        SessionInfo(session_id="b", pid=100),
+    ]
+    pids = {100}
+    health = check_session_health(sessions, pids)
+    assert health.stale_ids == []
+    # live_tracked = 2 - 0 = 2, untracked = max(0, 1 - 2) = 0
+    assert health.untracked_count == 0
+
+
+def test_health_status_message_plural():
+    """Plural form when multiple stale sessions."""
+    sessions = [
+        SessionInfo(session_id="a", pid=100),
+        SessionInfo(session_id="b", pid=200),
+    ]
+    health = check_session_health(sessions, set())
+    assert "2 stale sessions" in health.message
+
+
+def test_health_status_message_singular():
+    """Singular form with exactly one stale session."""
+    sessions = [
+        SessionInfo(session_id="a", pid=100),
+    ]
+    health = check_session_health(sessions, set())
+    assert "1 stale session " in health.message
+
+
+# --- Health bar TUI integration tests ---
+
+
+@pytest.mark.asyncio
+async def test_health_bar_shows_on_mismatch(fake_status_dir):
+    """Health bar should be visible when there are stale sessions."""
+    write_fake_session(fake_status_dir, "stale-session", pid=99999)
+    app = SessionsDashboard()
+    with patch("cctop_dashboard.get_claude_pids", return_value=set()):
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            bar = app.query_one("#health-bar", Static)
+            assert "visible" in bar.classes
+            rendered = _render_static_text(bar)
+            assert "stale" in rendered
+
+
+@pytest.mark.asyncio
+async def test_health_bar_hidden_when_matching(fake_status_dir):
+    """Health bar should be hidden when tracked sessions match processes."""
+    my_pid = os.getpid()
+    write_fake_session(fake_status_dir, "live-session", pid=my_pid)
+    app = SessionsDashboard()
+    with patch("cctop_dashboard.get_claude_pids", return_value={my_pid}):
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            bar = app.query_one("#health-bar", Static)
+            assert "visible" not in bar.classes
+
+
+@pytest.mark.asyncio
+async def test_health_bar_shows_untracked(fake_status_dir):
+    """Health bar should warn about untracked sessions."""
+    my_pid = os.getpid()
+    write_fake_session(fake_status_dir, "live-session", pid=my_pid)
+    app = SessionsDashboard()
+    # Return our PID plus two extras not in cctop
+    with patch("cctop_dashboard.get_claude_pids", return_value={my_pid, 88888, 77777}):
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            bar = app.query_one("#health-bar", Static)
+            assert "visible" in bar.classes
+            rendered = _render_static_text(bar)
+            assert "not tracked" in rendered
