@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -401,6 +402,39 @@ def aggregate_subagent_tokens(
     return total_input, total_output, total_cache_read, total_cache_creation, new_offsets
 
 
+# --- Git helpers ---
+
+
+def resolve_git_branch(cwd: str) -> str | None:
+    """Resolve a meaningful branch name when HEAD is detached.
+
+    Tries, in order: exact tag, symbolic branch, short SHA.
+    Returns None if all attempts fail or if cwd is not a git repo.
+    """
+    if not cwd or not Path(cwd).is_dir():
+        return None
+
+    commands = [
+        ["git", "describe", "--tags", "--exact-match", "HEAD"],
+        ["git", "symbolic-ref", "--short", "HEAD"],
+        ["git", "rev-parse", "--short", "HEAD"],
+    ]
+
+    for cmd in commands:
+        try:
+            result = subprocess.run(
+                cmd, cwd=cwd, capture_output=True, text=True, timeout=2,
+            )
+            if result.returncode == 0:
+                value = result.stdout.strip()
+                if value:
+                    return value
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+
+    return None
+
+
 # --- Main loop ---
 
 
@@ -479,6 +513,14 @@ def poll_once() -> None:
 
         if lines:
             updates = parse_new_lines(lines)
+
+            # Resolve detached HEAD to a tag or short SHA
+            if updates.get("git_branch") == "HEAD":
+                cwd = hook_data.get("cwd", "")
+                resolved = resolve_git_branch(cwd)
+                if resolved:
+                    updates["git_branch"] = resolved
+
             _accumulate_deltas(poller_data, updates)
             poller_data.update(updates)
             changed = True
