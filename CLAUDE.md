@@ -61,6 +61,15 @@ After editing any file under `plugin/`, you **must** reinstall:
 
 **Always run `./install.sh --dev` after modifying any plugin file** (hooks, scripts, manifests). New Claude sessions will pick up the changes; existing sessions keep the old version.
 
+## Releasing
+
+Use `release.sh` for version bumps and tagging. The script handles the mechanical parts, you write the changelog.
+
+1. `./release.sh bump <version>` — updates `plugin.json`, prints git log since last tag
+2. Read the git log output and write a human-readable `CHANGELOG.md` entry. Summarize what changed from the user's perspective (new features, bug fixes, improvements). Prepend the new entry to the file. Use format: `## vX.Y.Z — YYYY-MM-DD`
+3. `git add plugin/.claude-plugin/plugin.json CHANGELOG.md`
+4. `./release.sh tag` — commits, tags, pushes
+
 ## Writing Style
 
 - Use commas instead of emdashes (—) in prose
@@ -78,6 +87,11 @@ Before committing, run a basic security audit on staged changes:
 - **ALWAYS use a worktree when starting work on a new branch.** Use the `EnterWorktree` tool to create an isolated worktree before making any changes. Do NOT just create a branch with `git checkout -b` or `git switch -c` in the main working directory.
 - This keeps the main working directory clean on `main` and avoids conflicts with other sessions.
 - When the work is done and merged, exit the worktree with `ExitWorktree`.
+
+## GitHub CLI Gotchas
+
+- This repo's remote is `github.com`, but `GH_HOST` may be set to GHE. Always prefix `gh` commands with `GH_HOST=github.com` (e.g. `GH_HOST=github.com gh pr create ...`).
+- When merging PRs from a worktree, do NOT use `--delete-branch` on `gh pr merge`, it tries to checkout main locally which fails because main is already checked out in the main worktree. Just `gh pr merge N --squash`, then exit the worktree normally with `ExitWorktree` which handles branch cleanup.
 
 ## PR Groups Workflow (MANDATORY)
 
