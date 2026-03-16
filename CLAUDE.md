@@ -73,6 +73,23 @@ Before committing, run a basic security audit on staged changes:
 - No SentinelOne internal references (GHE URLs, internal tooling, team names)
 - TruffleHog runs as a pre-commit hook, but also manually sanity-check diffs for anything it might miss
 
+## Branching
+
+- **ALWAYS use a worktree when starting work on a new branch.** Use the `EnterWorktree` tool to create an isolated worktree before making any changes. Do NOT just create a branch with `git checkout -b` or `git switch -c` in the main working directory.
+- This keeps the main working directory clean on `main` and avoids conflicts with other sessions.
+- When the work is done and merged, exit the worktree with `ExitWorktree`.
+
+## PR Groups Workflow (MANDATORY)
+
+This project uses a structured PR-groups workflow defined in `plans/pr-groups.md`. **This workflow is not optional.** When asked to work on a PR group or backlog items:
+
+1. Read `plans/pr-groups.md` first to understand the grouping and dependencies
+2. Follow the workflow steps exactly as written in that file (branch → plan → implement → test → push & PR)
+3. Use `EnterWorktree` to create the worktree, do not skip this step
+4. Enter plan mode before implementing, get user approval before writing code
+5. Make granular commits (one per logical change)
+6. After merge, update both `BACKLOG.md` (mark items done) and `plans/pr-groups.md` (check off the PR group)
+
 ## Commits
 
 - Split uncommitted changes into logical, self-contained commits (e.g. separate feature code, tests, docs, backlog updates)
