@@ -520,7 +520,7 @@ class SessionsDashboard(App):
             table.add_row(
                 Text.assemble(("● ", "#e0af68"), s.custom_title) if s.custom_title else Text.assemble(("○ ", "dim"), s.session_id[:8]),
                 project,
-                s.git_branch[:12],
+                s.git_branch[:20],
                 styled_status(s.status, s.last_activity),
                 shorten_model(s.model),
                 ctx_pct,
