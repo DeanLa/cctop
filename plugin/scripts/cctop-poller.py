@@ -514,12 +514,12 @@ def poll_once() -> None:
         if lines:
             updates = parse_new_lines(lines)
 
-            # Resolve detached HEAD to a tag or short SHA
+            # Resolve detached HEAD to a tag or short SHA;
+            # clear it if not a git repo at all
             if updates.get("git_branch") == "HEAD":
                 cwd = hook_data.get("cwd", "")
                 resolved = resolve_git_branch(cwd)
-                if resolved:
-                    updates["git_branch"] = resolved
+                updates["git_branch"] = resolved or ""
 
             _accumulate_deltas(poller_data, updates)
             poller_data.update(updates)
