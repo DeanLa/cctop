@@ -560,9 +560,10 @@ class SessionsDashboard(App):
         self._sessions: list[SessionInfo] = []
         self._last_health_check: float = 0.0
         self._last_health: HealthStatus | None = None
+        self._last_row_keys: list[str] = []
         table = self.query_one(DataTable)
         table.cursor_type = "row"
-        table.add_columns("Slug", "Project", "Branch", "Status", "Model", "Ctx%", "Tokens", "Tools", "Files", "Agents", "Errors", "Turns", "StopRsn", "Duration", "Started", "Activity")
+        self._column_keys = table.add_columns("Slug", "Project", "Branch", "Status", "Model", "Ctx%", "Tokens", "Tools", "Files", "Agents", "Errors", "Turns", "StopRsn", "Duration", "Started", "Activity")
         self._schedule_refresh()
         self.set_interval(0.5, self._schedule_refresh)
 
@@ -660,55 +661,74 @@ class SessionsDashboard(App):
         # activity — most recent first
         return s.last_activity or ""
 
+    @staticmethod
+    def _build_row_cells(s: SessionInfo) -> tuple:
+        """Compute the cell values for a single session row."""
+        project = s.project_name or (os.path.basename(s.cwd) if s.cwd else "")
+        ctx = s.context_tokens
+        ctx_pct = f"{ctx * 100 // CONTEXT_WINDOW}%" if ctx else ""
+        tokens = format_tokens(ctx)
+        errors_cell = Text(str(s.error_count), style="red") if s.error_count else ""
+        slug_cell = (
+            Text.assemble(("● ", "#e0af68"), s.custom_title)
+            if s.custom_title
+            else Text.assemble(("○ ", "dim"), s.session_id[:8])
+        )
+        return (
+            slug_cell,
+            project,
+            s.git_branch[:20],
+            styled_status(s.status, s.last_activity),
+            friendly_model_name(s.model),
+            ctx_pct,
+            tokens,
+            str(s.tool_count) if s.tool_count else "",
+            str(len(s.files_edited)) if s.files_edited else "",
+            str(s.running_agents) if s.running_agents else "",
+            errors_cell,
+            str(s.turns) if s.turns else "",
+            format_stop_reason(s.stop_reason),
+            format_duration(s.started_at),
+            format_start_time(s.started_at),
+            format_relative_time(s.last_activity),
+        )
+
     def _repopulate_table(self) -> None:
         table = self.query_one(DataTable)
-        # Preserve the currently highlighted row across refreshes
-        saved_key = None
-        if table.row_count > 0:
-            try:
-                saved_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
-            except Exception:
-                pass
-        table.clear()
         # Numeric/time sorts: largest first; alphabetical sorts: A-Z
         reverse = self.sort_mode in ("activity", "duration", "turns", "tokens", "tools", "files", "agents", "errors")
         ordered = sorted(self._sessions, key=self._sort_key, reverse=reverse)
-        for s in ordered:
-            project = s.project_name or (os.path.basename(s.cwd) if s.cwd else "")
-            ctx = s.context_tokens
-            ctx_pct = f"{ctx * 100 // CONTEXT_WINDOW}%" if ctx else ""
-            tokens = format_tokens(ctx)
-            errors_cell = Text(str(s.error_count), style="red") if s.error_count else ""
-            table.add_row(
-                Text.assemble(("● ", "#e0af68"), s.custom_title) if s.custom_title else Text.assemble(("○ ", "dim"), s.session_id[:8]),
-                project,
-                s.git_branch[:20],
-                styled_status(s.status, s.last_activity),
-                friendly_model_name(s.model),
-                ctx_pct,
-                tokens,
-                str(s.tool_count) if s.tool_count else "",
-                str(len(s.files_edited)) if s.files_edited else "",
-                str(s.running_agents) if s.running_agents else "",
-                errors_cell,
-                str(s.turns) if s.turns else "",
-                format_stop_reason(s.stop_reason),
-                format_duration(s.started_at),
-                format_start_time(s.started_at),
-                format_relative_time(s.last_activity),
-                key=s.session_id,
-            )
+        new_keys = [s.session_id for s in ordered]
+
+        if new_keys == self._last_row_keys:
+            # Structure unchanged, patch cells in place
+            for s in ordered:
+                cells = self._build_row_cells(s)
+                for col_key, value in zip(self._column_keys, cells):
+                    table.update_cell(s.session_id, col_key, value)
+        else:
+            # Structural change: full rebuild
+            saved_key = None
+            if table.row_count > 0:
+                try:
+                    saved_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+                except Exception:
+                    pass
+            table.clear()
+            for s in ordered:
+                table.add_row(*self._build_row_cells(s), key=s.session_id)
+            self._last_row_keys = new_keys
+            # Restore cursor to the previously highlighted row
+            if saved_key is not None and table.row_count > 0:
+                try:
+                    row_idx = table.get_row_index(saved_key)
+                    table.move_cursor(row=row_idx)
+                except Exception:
+                    pass  # Row no longer exists (session ended)
+
         # Clear detail panel when table is empty (no sessions left)
         if table.row_count == 0:
             self.query_one("#detail", Static).update("")
-
-        # Restore cursor to the previously highlighted row
-        if saved_key is not None and table.row_count > 0:
-            try:
-                row_idx = table.get_row_index(saved_key)
-                table.move_cursor(row=row_idx)
-            except Exception:
-                pass  # Row no longer exists (session ended)
 
     # --- Detail panel ----------------------------------------------------
 
