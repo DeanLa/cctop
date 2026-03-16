@@ -54,6 +54,18 @@ esac
 
 NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+# Compute running_agents delta:
+#   +1 on PreToolUse for Agent/TeamCreate/SendMessage (agent spawned)
+#   -1 on SubagentStop (agent finished), floor at 0
+AGENT_DELTA=0
+if [ "$EVENT" = "PreToolUse" ]; then
+    case "$TOOL" in
+        Agent|TeamCreate|SendMessage) AGENT_DELTA=1 ;;
+    esac
+elif [ "$EVENT" = "SubagentStop" ]; then
+    AGENT_DELTA=-1
+fi
+
 # Read existing to preserve started_at and tool_count
 EXISTING=$(cat "$STATUS_FILE" 2>/dev/null || echo '{}')
 
@@ -69,6 +81,7 @@ echo "$EXISTING" | jq \
     --arg tp "$TRANSCRIPT_PATH" \
     --arg model "$MODEL" \
     --argjson ppid "${PPID:-0}" \
+    --argjson agent_delta "$AGENT_DELTA" \
     '{
         session_id: $sid,
         cwd: $cwd,
@@ -80,5 +93,6 @@ echo "$EXISTING" | jq \
         pid: (if $ppid > 0 then $ppid else (.pid // null) end),
         transcript_path: (if $tp != "" then $tp else (.transcript_path // "") end),
         model: (if $model != "" then $model else (.model // "") end),
-        tool_count: (if $event == "PostToolUse" then ((.tool_count // 0) + 1) else (.tool_count // 0) end)
+        tool_count: (if $event == "PostToolUse" then ((.tool_count // 0) + 1) else (.tool_count // 0) end),
+        running_agents: ([(.running_agents // 0) + $agent_delta, 0] | max)
     }' > "$TMPFILE" && mv "$TMPFILE" "$STATUS_FILE"
