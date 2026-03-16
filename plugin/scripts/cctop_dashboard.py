@@ -15,10 +15,11 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from rich.console import Group
 from rich.markdown import Markdown as RichMarkdown
@@ -262,6 +263,7 @@ class SessionInfo:
     subagent_count: int = 0
     error_count: int = 0
     stop_reason: str = ""
+    pid: int | None = None
     running_agents: int = 0
     cumulative_input_tokens: int = 0
     cumulative_output_tokens: int = 0
@@ -330,12 +332,14 @@ def load_sessions() -> list[SessionInfo]:
             poller = json.loads(poller_fp.read_text())
         except (OSError, json.JSONDecodeError):
             poller = {}
+        raw_pid = hook.get("pid")
         info = SessionInfo(
             session_id=sid,
             cwd=hook.get("cwd", ""),
             status=hook.get("status", ""),
             last_activity=hook.get("last_activity", ""),
             started_at=hook.get("started_at", ""),
+            pid=raw_pid if isinstance(raw_pid, int) else None,
             tool_count=poller.get("tool_count", 0) or hook.get("tool_count", 0),
             slug=poller.get("slug", ""),
             git_branch=poller.get("git_branch", ""),
@@ -418,6 +422,111 @@ def purge_dead_sessions() -> int:
     return removed
 
 
+# --- Health check ---
+
+# Patterns to exclude from ps output when identifying real Claude sessions
+_PS_EXCLUDE_PATTERNS = (
+    "/Applications/Claude.app/",
+    "--parent-session-id",
+    "mcp-",
+    "uvx",
+    "caffeinate",
+    "grep",
+)
+
+
+@dataclass
+class HealthStatus:
+    """Result of comparing cctop tracked sessions against real processes."""
+
+    tracked_count: int = 0
+    process_count: int = 0
+    stale_ids: list[str] = field(default_factory=list)
+    untracked_count: int = 0
+
+    @property
+    def has_mismatch(self) -> bool:
+        return bool(self.stale_ids) or self.untracked_count > 0
+
+    @property
+    def message(self) -> str:
+        parts: list[str] = []
+        if self.stale_ids:
+            n = len(self.stale_ids)
+            parts.append(f"{n} stale session{'s' if n != 1 else ''} detected, press R to purge")
+        if self.untracked_count > 0:
+            n = self.untracked_count
+            parts.append(
+                f"{n} session{'s' if n != 1 else ''} not tracked, "
+                "if they started before cctop was installed, this is expected"
+            )
+        return "\n".join(parts)
+
+
+def get_claude_pids() -> set[int]:
+    """Return PIDs of real Claude CLI sessions from ``ps``.
+
+    Excludes the Desktop app, MCP servers, teammate subagents, and
+    other non-interactive processes.
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "pid,command"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+
+    pids: set[int] = set()
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) < 2:
+            continue
+        pid_str, cmd = parts
+        # The command portion must reference "claude"
+        if "claude" not in cmd.lower():
+            continue
+        # Apply exclusion filters
+        if any(pat in cmd for pat in _PS_EXCLUDE_PATTERNS):
+            continue
+        # Include only bare `claude` or `claude -r` style invocations
+        # The executable basename should be "claude"
+        cmd_parts = cmd.split()
+        basename = os.path.basename(cmd_parts[0]) if cmd_parts else ""
+        if basename != "claude":
+            continue
+        try:
+            pids.add(int(pid_str))
+        except ValueError:
+            continue
+    return pids
+
+
+def check_session_health(sessions: list[SessionInfo], claude_pids: set[int]) -> HealthStatus:
+    """Compare tracked sessions against live Claude processes."""
+    tracked_count = len(sessions)
+    stale_ids: list[str] = []
+
+    for s in sessions:
+        if s.pid is not None and s.pid > 0:
+            if s.pid not in claude_pids:
+                stale_ids.append(s.session_id)
+
+    live_tracked = tracked_count - len(stale_ids)
+    process_count = len(claude_pids)
+    untracked_count = max(0, process_count - live_tracked)
+
+    return HealthStatus(
+        tracked_count=tracked_count,
+        process_count=process_count,
+        stale_ids=stale_ids,
+        untracked_count=untracked_count,
+    )
+
+
 # --- Sort Picker Modal ---
 
 
@@ -474,6 +583,18 @@ class SessionsDashboard(App):
     DataTable {
         height: 1fr;
     }
+    #health-bar {
+        height: auto;
+        padding: 0 1;
+        background: #c46600;
+        color: #1a1a1a;
+        text-style: bold;
+        text-align: right;
+        display: none;
+    }
+    #health-bar.visible {
+        display: block;
+    }
     """
 
     BINDINGS = [
@@ -490,6 +611,7 @@ class SessionsDashboard(App):
     def compose(self) -> ComposeResult:
         yield Header()
         yield DataTable(id="table")
+        yield Static("", id="health-bar")
         with VerticalScroll(id="detail-scroll"):
             yield Static("", id="detail")
         yield Footer()
@@ -532,6 +654,16 @@ class SessionsDashboard(App):
         self._repopulate_table()
         count = len(self._sessions)
         self.sub_title = f"{count} session{'s' if count != 1 else ''} · sorted by {self.sort_mode}"
+        # Health check
+        pids = get_claude_pids()
+        health = check_session_health(self._sessions, pids)
+        bar = self.query_one("#health-bar", Static)
+        if health.has_mismatch:
+            bar.update(health.message)
+            bar.add_class("visible")
+        else:
+            bar.update("")
+            bar.remove_class("visible")
 
     def _sort_key(self, s: SessionInfo):
         if self.sort_mode == "slug":
