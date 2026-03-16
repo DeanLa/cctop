@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import tempfile
@@ -187,6 +188,7 @@ def parse_codex_new_lines(lines: list[str]) -> dict:
     turns_delta = 0
     tool_count_delta = 0
     error_count_delta = 0
+    files_edited_delta: set[str] = set()
     latest_input = 0
     latest_output = 0
     latest_window = 0
@@ -264,7 +266,16 @@ def parse_codex_new_lines(lines: list[str]) -> dict:
         item_type = payload.get("type", "")
         if item_type == "function_call":
             tool_count_delta += 1
-            latest_status = f"tool:{payload.get('name', '')}"
+            name = payload.get("name", "")
+            arguments_raw = payload.get("arguments", "")
+            arguments = {}
+            if isinstance(arguments_raw, str):
+                try:
+                    arguments = json.loads(arguments_raw)
+                except json.JSONDecodeError:
+                    arguments = {}
+            latest_status = infer_codex_status(name, arguments)
+            files_edited_delta.update(extract_codex_edited_files(name, arguments))
         elif item_type == "function_call_output":
             output = payload.get("output", "")
             if isinstance(output, str) and "Exit code:" in output:
@@ -296,7 +307,7 @@ def parse_codex_new_lines(lines: list[str]) -> dict:
     updates["_status"] = latest_status
     updates["_delta_turns"] = turns_delta
     updates["_delta_tool_count"] = tool_count_delta
-    updates["_delta_files_edited"] = []
+    updates["_delta_files_edited"] = sorted(files_edited_delta)
     updates["_delta_subagent_count"] = 0
     updates["_delta_error_count"] = error_count_delta
     updates["_delta_cumulative_input"] = 0
@@ -306,6 +317,56 @@ def parse_codex_new_lines(lines: list[str]) -> dict:
     updates["_delta_reasoning_output"] = 0
 
     return updates
+
+
+def infer_codex_status(name: str, arguments: dict) -> str:
+    """Map a Codex tool call to a normalized status label."""
+    if name == "multi_tool_use.parallel":
+        return "tool:multi_tool_use.parallel"
+    if name != "shell_command":
+        return f"tool:{name}" if name else "thinking"
+
+    command = str(arguments.get("command", "")).lower()
+    if not command:
+        return "tool:shell_command"
+
+    if any(token in command for token in ("apply_patch", "set-content", "add-content", "out-file", "new-item")):
+        return "tool:Edit"
+    if any(token in command for token in ("git diff", "git show", "git status", "get-content", "cat ", "type ")):
+        return "tool:Read"
+    if any(token in command for token in ("rg ", "rg.exe", "select-string", "findstr", "get-childitem", "ls", "dir ")):
+        return "tool:Glob"
+    if any(token in command for token in ("pip install", "npm install", "uv ", "cargo ", "pytest", "python -m pytest", "npx ", "npm test", "npm run")):
+        return "tool:Bash"
+    return "tool:shell_command"
+
+
+def extract_codex_edited_files(name: str, arguments: dict) -> set[str]:
+    """Best-effort extraction of edited file paths from Codex tool calls."""
+    if name != "shell_command":
+        return set()
+
+    command = str(arguments.get("command", ""))
+    if not command:
+        return set()
+
+    files: set[str] = set()
+    patterns = [
+        r"Set-Content -Path ([^\s\"']+)",
+        r"Set-Content -Path \"([^\"]+)\"",
+        r"Add-Content -Path ([^\s\"']+)",
+        r"Add-Content -Path \"([^\"]+)\"",
+        r"Out-File ([^\s\"']+)",
+        r"Get-Content ([^\n\r|]+)\s*\|",
+        r"\*\*\* Update File: (.+)",
+        r"\*\*\* Add File: (.+)",
+    ]
+    for pattern in patterns:
+        for match in re.findall(pattern, command):
+            candidate = str(match).strip().strip("'\"")
+            if candidate and not candidate.startswith("@'"):
+                files.add(candidate)
+    return files
 
 
 # --- File I/O ---
@@ -525,6 +586,13 @@ def discover_codex_sessions() -> None:
             "tool_count": existing.get("tool_count", 0),
             "project_name": project_name,
         })
+        poller_fp = STATUS_DIR / f"{sid}.poller.json"
+        poller_existing = read_json(poller_fp) or {}
+        if entry.get("thread_name") and not poller_existing.get("custom_title"):
+            upsert_status_file(poller_fp, {
+                "custom_title": entry["thread_name"],
+                "slug": entry["thread_name"],
+            })
 
 
 def read_json_from_transcript(transcript_path: str) -> dict | None:

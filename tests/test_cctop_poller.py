@@ -18,6 +18,8 @@ _spec.loader.exec_module(_mod)
 
 parse_new_lines = _mod.parse_new_lines
 parse_codex_new_lines = _mod.parse_codex_new_lines
+infer_codex_status = _mod.infer_codex_status
+extract_codex_edited_files = _mod.extract_codex_edited_files
 resolve_git_branch = _mod.resolve_git_branch
 detect_worktree = _mod.detect_worktree
 
@@ -150,7 +152,13 @@ class TestCodexParsing:
             }),
             json.dumps({
                 "type": "response_item",
-                "payload": {"type": "function_call", "name": "shell_command"},
+                "payload": {
+                    "type": "function_call",
+                    "name": "shell_command",
+                    "arguments": json.dumps({
+                        "command": "Set-Content -Path notes.txt -Value 'updated'",
+                    }),
+                },
             }),
             json.dumps({
                 "type": "response_item",
@@ -199,7 +207,26 @@ class TestCodexParsing:
         assert result["_delta_turns"] == 1
         assert result["_delta_tool_count"] == 1
         assert result["_delta_error_count"] == 1
+        assert "notes.txt" in result["_delta_files_edited"]
         assert result["_status"] == "idle"
+
+
+class TestCodexStatusInference:
+    def test_infer_codex_status_read(self):
+        assert infer_codex_status("shell_command", {"command": "Get-Content README.md"}) == "tool:Read"
+
+    def test_infer_codex_status_search(self):
+        assert infer_codex_status("shell_command", {"command": "rg -n foo ."}) == "tool:Glob"
+
+    def test_infer_codex_status_edit(self):
+        assert infer_codex_status("shell_command", {"command": "Set-Content -Path file.txt -Value hi"}) == "tool:Edit"
+
+    def test_infer_codex_status_parallel(self):
+        assert infer_codex_status("multi_tool_use.parallel", {}) == "tool:multi_tool_use.parallel"
+
+    def test_extract_codex_edited_files(self):
+        files = extract_codex_edited_files("shell_command", {"command": "Set-Content -Path \"docs\\note.md\" -Value 'x'"})
+        assert "docs\\note.md" in files
 
 
 # --- resolve_git_branch tests ---
