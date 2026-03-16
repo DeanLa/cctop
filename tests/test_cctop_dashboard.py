@@ -322,7 +322,6 @@ async def test_sort_by_files(fake_status_dir):
     async with app.run_test() as pilot:
         await pilot.pause()
         app.sort_mode = "files"
-        app._repopulate_table()
         table = app.query_one(DataTable)
         # First row should be the session with more files
         first_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key

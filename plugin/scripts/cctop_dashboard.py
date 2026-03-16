@@ -27,6 +27,7 @@ from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.containers import VerticalScroll
 from textual.widgets import DataTable, Footer, Header, OptionList, Static
@@ -544,7 +545,7 @@ class SessionsDashboard(App):
         Binding("s", "open_sort", "Sort"),
     ]
 
-    sort_mode: str = "activity"
+    sort_mode: reactive[str] = reactive("activity", init=False)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -584,8 +585,11 @@ class SessionsDashboard(App):
         def _on_dismiss(result: str) -> None:
             if result:
                 self.sort_mode = result
-                self._repopulate_table()
         self.push_screen(SortPicker(), callback=_on_dismiss)
+
+    def watch_sort_mode(self, new_value: str) -> None:
+        """Re-sort the table when sort_mode changes."""
+        self._repopulate_table()
 
     # --- Data loading ----------------------------------------------------
 
