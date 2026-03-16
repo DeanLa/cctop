@@ -27,6 +27,9 @@ from cctop_dashboard import (
     format_tokens,
     format_relative_time,
     estimate_cost,
+    friendly_model_name,
+    format_start_time,
+    format_stop_reason,
     purge_dead_sessions,
     STATUS_DIR,
 )
@@ -155,6 +158,74 @@ def test_format_relative_time_minutes():
     assert "m ago" in result
 
 
+# --- friendly_model_name tests ---
+
+def test_friendly_model_name_sonnet():
+    assert friendly_model_name("claude-sonnet-4-6-20260301") == "sonnet 4.6"
+
+
+def test_friendly_model_name_opus():
+    assert friendly_model_name("claude-opus-4-6-v1[1m]") == "opus 4.6"
+
+
+def test_friendly_model_name_haiku():
+    assert friendly_model_name("claude-haiku-4-5-20251001") == "haiku 4.5"
+
+
+def test_friendly_model_name_unknown():
+    assert friendly_model_name("gpt-4o-mini") == "gpt-4o-mini"
+
+
+def test_friendly_model_name_empty():
+    assert friendly_model_name("") == ""
+
+
+# --- format_start_time tests ---
+
+def test_format_start_time_empty():
+    assert format_start_time("") == ""
+
+
+def test_format_start_time_today():
+    """A timestamp from today should show just HH:MM."""
+    now = datetime.now(timezone.utc)
+    result = format_start_time(now.isoformat())
+    assert ":" in result
+    # Should be short (just time, no date)
+    assert len(result) <= 5
+
+
+def test_format_start_time_other_day():
+    """A timestamp from yesterday should include month and day."""
+    yesterday = datetime.now(timezone.utc) - timedelta(days=2)
+    result = format_start_time(yesterday.isoformat())
+    assert ":" in result
+    # Should be longer (includes date)
+    assert len(result) > 5
+
+
+# --- format_stop_reason tests ---
+
+def test_format_stop_reason_empty():
+    assert format_stop_reason("") == ""
+
+
+def test_format_stop_reason_end_turn():
+    assert format_stop_reason("end_turn") == "done"
+
+
+def test_format_stop_reason_tool_use():
+    assert format_stop_reason("tool_use") == "tool"
+
+
+def test_format_stop_reason_max_tokens():
+    assert format_stop_reason("max_tokens") == "limit"
+
+
+def test_format_stop_reason_unknown():
+    assert format_stop_reason("something_else") == "something_else"
+
+
 # --- TUI integration tests ---
 
 @pytest.fixture
@@ -166,11 +237,11 @@ def fake_status_dir(tmp_path):
 
 @pytest.mark.asyncio
 async def test_app_starts_empty(fake_status_dir):
-    """Empty status dir → 11 columns, 0 rows."""
+    """Empty status dir → 16 columns, 0 rows."""
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         table = app.query_one(DataTable)
-        assert len(table.columns) == 11
+        assert len(table.columns) == 16
         assert table.row_count == 0
 
 
