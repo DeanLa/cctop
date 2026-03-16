@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from rich.console import Group
 from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
+from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.reactive import reactive
@@ -562,23 +563,18 @@ class SessionsDashboard(App):
         table = self.query_one(DataTable)
         table.cursor_type = "row"
         table.add_columns("Slug", "Project", "Branch", "Status", "Model", "Ctx%", "Tokens", "Tools", "Files", "Agents", "Errors", "Turns", "StopRsn", "Duration", "Started", "Activity")
-        self.refresh_data()
-        self.set_interval(0.5, self.refresh_data)
+        self._schedule_refresh()
+        self.set_interval(0.5, self._schedule_refresh)
 
     # --- Actions ---------------------------------------------------------
 
     def action_force_refresh(self) -> None:
         """Force reload all session data."""
-        self.refresh_data()
+        self._schedule_refresh()
 
     def action_purge_dead(self) -> None:
         """Remove dead session files and refresh."""
-        count = purge_dead_sessions()
-        self.refresh_data()
-        if count:
-            self.notify(f"Purged {count} dead session(s)")
-        else:
-            self.notify("No dead sessions found")
+        self._do_purge()
 
     def action_open_sort(self) -> None:
         """Open the sort picker popup."""
@@ -593,26 +589,54 @@ class SessionsDashboard(App):
 
     # --- Data loading ----------------------------------------------------
 
-    def refresh_data(self) -> None:
-        """Poll session status files and update the table."""
-        self._sessions = load_sessions()
+    def _schedule_refresh(self) -> None:
+        """Timer callback: decide if health check is due, launch worker."""
+        now = _time.monotonic()
+        check_health = (now - self._last_health_check) >= HEALTH_CHECK_INTERVAL
+        if check_health:
+            self._last_health_check = now
+        self._do_refresh(check_health)
+
+    @work(thread=True, exclusive=True)
+    def _do_refresh(self, check_health: bool) -> None:
+        """Background thread: read session files and optionally run health check."""
+        sessions = load_sessions()
+        health: HealthStatus | None = None
+        if check_health:
+            pids = get_claude_pids()
+            health = check_session_health(sessions, pids)
+        self.call_from_thread(self._apply_refresh, sessions, health)
+
+    def _apply_refresh(self, sessions: list[SessionInfo], health: HealthStatus | None) -> None:
+        """Main thread: update state and UI with results from the worker."""
+        self._sessions = sessions
         self._repopulate_table()
         count = len(self._sessions)
         self.sub_title = f"{count} session{'s' if count != 1 else ''} · sorted by {self.sort_mode}"
-        # Health check (throttled to every HEALTH_CHECK_INTERVAL seconds)
-        now = _time.monotonic()
-        if now - self._last_health_check >= HEALTH_CHECK_INTERVAL:
-            pids = get_claude_pids()
-            self._last_health = check_session_health(self._sessions, pids)
-            self._last_health_check = now
-        health = self._last_health
+        if health is not None:
+            self._last_health = health
         bar = self.query_one("#health-bar", Static)
-        if health and health.has_mismatch:
-            bar.update(health.message)
+        current_health = self._last_health
+        if current_health and current_health.has_mismatch:
+            bar.update(current_health.message)
             bar.add_class("visible")
         else:
             bar.update("")
             bar.remove_class("visible")
+
+    @work(thread=True, exclusive=True, group="purge")
+    def _do_purge(self) -> None:
+        """Background thread: purge dead sessions."""
+        count = purge_dead_sessions()
+        self.call_from_thread(self._apply_purge, count)
+
+    def _apply_purge(self, count: int) -> None:
+        """Main thread: notify user and refresh after purge."""
+        if count:
+            self.notify(f"Purged {count} dead session(s)")
+        else:
+            self.notify("No dead sessions found")
+        self._schedule_refresh()
 
     def _sort_key(self, s: SessionInfo):
         if self.sort_mode == "slug":
