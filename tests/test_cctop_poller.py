@@ -2,12 +2,14 @@
 # requires-python = ">=3.11"
 # dependencies = ["pytest>=8.0"]
 # ///
-"""Tests for the cctop poller — parse_new_lines() turn counting."""
+"""Tests for the cctop poller — parse_new_lines() and resolve_git_branch()."""
 from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 _scripts = Path(__file__).resolve().parent.parent / "plugin" / "scripts"
 _spec = importlib.util.spec_from_file_location("cctop_poller", _scripts / "cctop-poller.py")
@@ -15,6 +17,7 @@ _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 
 parse_new_lines = _mod.parse_new_lines
+resolve_git_branch = _mod.resolve_git_branch
 
 
 # --- Helpers ---
@@ -120,3 +123,66 @@ class TestTurnCounting:
         result = parse_new_lines(lines)
         assert result["_delta_turns"] == 3
         assert result["last_user_msg"] == "Third question"
+
+
+# --- resolve_git_branch tests ---
+
+
+def _mock_run(outputs: dict[tuple[str, ...], tuple[int, str]]):
+    """Create a side_effect for subprocess.run that maps command tuples to (returncode, stdout)."""
+    def side_effect(cmd, **kwargs):
+        key = tuple(cmd)
+        if key in outputs:
+            rc, out = outputs[key]
+            return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="fatal")
+    return side_effect
+
+
+class TestResolveGitBranch:
+    """Verify resolve_git_branch() tries tag, branch, then short SHA."""
+
+    def test_returns_tag_when_exact_match(self, tmp_path):
+        with patch.object(_mod, "subprocess") as mock_sp:
+            mock_sp.run.side_effect = _mock_run({
+                ("git", "describe", "--tags", "--exact-match", "HEAD"): (0, "v1.2.3\n"),
+            })
+            mock_sp.TimeoutExpired = subprocess.TimeoutExpired
+            assert resolve_git_branch(str(tmp_path)) == "v1.2.3"
+
+    def test_falls_back_to_symbolic_ref(self, tmp_path):
+        with patch.object(_mod, "subprocess") as mock_sp:
+            mock_sp.run.side_effect = _mock_run({
+                ("git", "describe", "--tags", "--exact-match", "HEAD"): (128, ""),
+                ("git", "symbolic-ref", "--short", "HEAD"): (0, "main\n"),
+            })
+            mock_sp.TimeoutExpired = subprocess.TimeoutExpired
+            assert resolve_git_branch(str(tmp_path)) == "main"
+
+    def test_falls_back_to_short_sha(self, tmp_path):
+        with patch.object(_mod, "subprocess") as mock_sp:
+            mock_sp.run.side_effect = _mock_run({
+                ("git", "describe", "--tags", "--exact-match", "HEAD"): (128, ""),
+                ("git", "symbolic-ref", "--short", "HEAD"): (128, ""),
+                ("git", "rev-parse", "--short", "HEAD"): (0, "abc1234\n"),
+            })
+            mock_sp.TimeoutExpired = subprocess.TimeoutExpired
+            assert resolve_git_branch(str(tmp_path)) == "abc1234"
+
+    def test_returns_none_when_all_fail(self, tmp_path):
+        with patch.object(_mod, "subprocess") as mock_sp:
+            mock_sp.run.side_effect = _mock_run({})
+            mock_sp.TimeoutExpired = subprocess.TimeoutExpired
+            assert resolve_git_branch(str(tmp_path)) is None
+
+    def test_returns_none_on_timeout(self, tmp_path):
+        with patch.object(_mod, "subprocess") as mock_sp:
+            mock_sp.run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=2)
+            mock_sp.TimeoutExpired = subprocess.TimeoutExpired
+            assert resolve_git_branch(str(tmp_path)) is None
+
+    def test_returns_none_for_empty_cwd(self):
+        assert resolve_git_branch("") is None
+
+    def test_returns_none_for_nonexistent_dir(self):
+        assert resolve_git_branch("/nonexistent/path/xyz") is None
