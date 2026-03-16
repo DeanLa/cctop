@@ -4,14 +4,14 @@ Items tagged with `PR-X` are assigned to a PR group, see [plans/pr-groups.md](pl
 When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
 ## Table & Columns
-- [ ] **1.** Add `Files` column (count of files edited) `PR-A`
-- [ ] **2.** Add `Agents` column (subagent count) `PR-A`
-- [ ] **3.** Add `Errors` column (error count) `PR-A`
-- [ ] **4.** Add `StopRsn` column ("done", "tool", "limit") `PR-A`
+- [x] **1.** Add `Files` column (count of files edited) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
+- [x] **2.** Add `Agents` column (subagent count) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
+- [x] **3.** Add `Errors` column (error count) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
+- [x] **4.** Add `StopRsn` column ("done", "tool", "limit") `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
 - [ ] **5.** Sparkline per session showing tool activity over time `PR-L`
 - [ ] **6.** Group/collapse sessions by project directory `PR-M`
-- [ ] **7.** Show full model name in `Model` column (e.g. `claude-sonnet-4-6` instead of truncated) `PR-A`
-- [ ] **8.** Add `Started` column showing session start time `PR-A`
+- [x] **7.** Show full model name in `Model` column (e.g. `claude-sonnet-4-6` instead of truncated) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
+- [x] **8.** Add `Started` column showing session start time `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
 - [ ] **9.** Fix `Turns` count, count user messages instead of tool calls (a turn is a user-assistant exchange, not every tool invocation) `PR-C`
 
 ## Detail Panel
