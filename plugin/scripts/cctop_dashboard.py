@@ -93,7 +93,7 @@ MODEL_SHORT: dict[str, str] = {
 
 
 def shorten_model(model: str) -> str:
-    """Shorten a model identifier for display."""
+    """Shorten a model identifier for cost lookup. Used by estimate_cost()."""
     for key, short in MODEL_SHORT.items():
         if key in model:
             return short
