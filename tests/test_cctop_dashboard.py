@@ -58,6 +58,7 @@ def write_fake_session(tmpdir: Path, sid: str, *,
                        error_count: int = 0,
                        subagent_count: int = 0,
                        files_edited: list[str] | None = None,
+                       running_agents: int = 0,
                        git_branch: str = "main",
                        slug: str = "",
                        custom_title: str = "",
@@ -73,6 +74,7 @@ def write_fake_session(tmpdir: Path, sid: str, *,
         "started_at": started_at or _ago_iso(30),
         "model": model,
         "tool_count": 0,
+        "running_agents": running_agents,
     }
     if pid is not None:
         hook["pid"] = pid
@@ -196,9 +198,9 @@ def test_format_start_time_today():
 
 
 def test_format_start_time_other_day():
-    """A timestamp from yesterday should include month and day."""
-    yesterday = datetime.now(timezone.utc) - timedelta(days=2)
-    result = format_start_time(yesterday.isoformat())
+    """A timestamp from a different day should include month and day."""
+    other_day = datetime.now(timezone.utc) - timedelta(days=2)
+    result = format_start_time(other_day.isoformat())
     assert ":" in result
     # Should be longer (includes date)
     assert len(result) > 5
@@ -224,6 +226,18 @@ def test_format_stop_reason_max_tokens():
 
 def test_format_stop_reason_unknown():
     assert format_stop_reason("something_else") == "something_else"
+
+
+# --- format_start_time edge cases ---
+
+def test_format_start_time_z_suffix():
+    """Z-suffixed timestamps (the hook's format) should parse correctly."""
+    assert format_start_time("2026-03-16T10:30:00Z") != ""
+
+
+def test_format_start_time_malformed():
+    """Malformed input should return empty string, not raise."""
+    assert format_start_time("garbage") == ""
 
 
 # --- TUI integration tests ---
@@ -294,6 +308,37 @@ async def test_detail_panel_updates(fake_status_dir):
         # The first row should auto-highlight and populate detail
         rendered = _render_static_text(detail)
         assert "/home/user/myproject" in rendered
+
+
+@pytest.mark.asyncio
+async def test_running_agents_column(fake_status_dir):
+    """Sessions with running_agents should show the count in the Agents column."""
+    write_fake_session(fake_status_dir, "agent-1111", running_agents=3)
+    write_fake_session(fake_status_dir, "agent-2222", running_agents=0)
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = app.query_one(DataTable)
+        assert table.row_count == 2
+        # Verify the running_agents field was loaded from hook JSON
+        s = next(s for s in app._sessions if s.session_id == "agent-1111")
+        assert s.running_agents == 3
+
+
+@pytest.mark.asyncio
+async def test_sort_by_files(fake_status_dir):
+    """Sorting by files should order by file count descending."""
+    write_fake_session(fake_status_dir, "few-files", files_edited=["a.py"])
+    write_fake_session(fake_status_dir, "many-files", files_edited=["a.py", "b.py", "c.py"])
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.sort_mode = "files"
+        app._repopulate_table()
+        table = app.query_one(DataTable)
+        # First row should be the session with more files
+        first_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+        assert str(first_key.value) == "many-files"
 
 
 # --- Purge dead sessions tests ---
