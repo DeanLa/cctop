@@ -440,10 +440,14 @@ def resolve_git_branch(cwd: str) -> str | None:
     return None
 
 
-def is_git_worktree(cwd: str) -> bool:
-    """Check if the given directory is inside a git worktree (not the main tree)."""
+def detect_worktree(cwd: str) -> str | None:
+    """If cwd is a git worktree, return the original repo basename. Otherwise None.
+
+    Compares git-dir vs git-common-dir; if they differ, it's a worktree.
+    The common dir's parent is the original repo root.
+    """
     if not cwd or not Path(cwd).is_dir():
-        return False
+        return None
     try:
         git_dir = subprocess.run(
             ["git", "rev-parse", "--git-dir"],
@@ -454,10 +458,15 @@ def is_git_worktree(cwd: str) -> bool:
             cwd=cwd, capture_output=True, text=True, timeout=2,
         )
         if git_dir.returncode != 0 or common_dir.returncode != 0:
-            return False
-        return git_dir.stdout.strip() != common_dir.stdout.strip()
+            return None
+        gd = git_dir.stdout.strip()
+        cd = common_dir.stdout.strip()
+        if gd == cd:
+            return None
+        # common_dir is like /path/to/repo/.git → parent is the repo root
+        return Path(cd).parent.name
     except (OSError, subprocess.TimeoutExpired):
-        return False
+        return None
 
 
 # --- Main loop ---
@@ -544,8 +553,10 @@ def poll_once() -> None:
                 cwd = hook_data.get("cwd", "")
                 if updates["git_branch"] == "HEAD":
                     updates["git_branch"] = resolve_git_branch(cwd) or ""
-                if updates["git_branch"] and is_git_worktree(cwd):
+                repo_name = detect_worktree(cwd)
+                if repo_name and updates["git_branch"]:
                     updates["git_branch"] = "\U0001f33f " + updates["git_branch"]
+                    updates["project_name"] = repo_name
 
             _accumulate_deltas(poller_data, updates)
             poller_data.update(updates)

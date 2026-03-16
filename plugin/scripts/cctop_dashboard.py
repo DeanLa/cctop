@@ -198,6 +198,7 @@ class SessionInfo:
     started_at: str = ""
     slug: str = ""
     git_branch: str = ""
+    project_name: str = ""
     model: str = ""
     last_user_msg: str = ""
     last_assistant_msg: str = ""
@@ -287,6 +288,7 @@ def load_sessions() -> list[SessionInfo]:
             tool_count=poller.get("tool_count", 0) or hook.get("tool_count", 0),
             slug=poller.get("slug", ""),
             git_branch=poller.get("git_branch", ""),
+            project_name=poller.get("project_name", ""),
             model=poller.get("model", "") or hook.get("model", ""),
             last_user_msg=_clean_user_msg(poller.get("last_user_msg", "")),
             last_assistant_msg=poller.get("last_assistant_msg", ""),
@@ -511,7 +513,7 @@ class SessionsDashboard(App):
         reverse = self.sort_mode in ("activity", "duration", "turns", "tokens", "tools", "errors")
         ordered = sorted(self._sessions, key=self._sort_key, reverse=reverse)
         for s in ordered:
-            project = os.path.basename(s.cwd) if s.cwd else ""
+            project = s.project_name or (os.path.basename(s.cwd) if s.cwd else "")
             ctx = s.context_tokens
             ctx_pct = f"{ctx * 100 // CONTEXT_WINDOW}%" if ctx else ""
             tokens = format_tokens(ctx)
