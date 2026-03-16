@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -36,6 +37,7 @@ from textual.widgets.option_list import Option
 STATUS_DIR = Path.home() / ".cctop"
 CONTEXT_WINDOW = 200_000
 STALE_SECONDS = 60 * 60
+HEALTH_CHECK_INTERVAL = 10.0  # seconds between ps-based health checks
 SORT_OPTIONS: list[tuple[str, str]] = [
     ("activity", "Last Activity"),
     ("slug", "Name"),
@@ -86,21 +88,6 @@ STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "ended": ("dim", "ended"),
 }
 
-MODEL_SHORT: dict[str, str] = {
-    "claude-opus-4-6": "opus",
-    "claude-sonnet-4-6": "sonnet",
-    "claude-haiku-4-5": "haiku",
-}
-
-
-def shorten_model(model: str) -> str:
-    """Shorten a model identifier for cost lookup. Used by estimate_cost()."""
-    for key, short in MODEL_SHORT.items():
-        if key in model:
-            return short
-    return model[:12] if model else ""
-
-
 def friendly_model_name(model: str) -> str:
     """Human-friendly short name for the table column.
 
@@ -148,14 +135,6 @@ def format_stop_reason(reason: str) -> str:
     return mapping.get(reason, reason)
 
 
-# Per-model rates: (input_per_1M, output_per_1M, cache_read_per_1M, cache_creation_per_1M)
-MODEL_RATES: dict[str, tuple[float, float, float, float]] = {
-    "opus": (5.0, 25.0, 0.50, 6.25),
-    "sonnet": (3.0, 15.0, 0.30, 3.75),
-    "haiku": (1.0, 5.0, 0.10, 1.25),
-}
-
-
 def _parse_age_seconds(iso_str: str) -> float | None:
     """Parse ISO timestamp and return seconds since then, or None on failure."""
     if not iso_str:
@@ -194,36 +173,6 @@ def format_relative_time(iso_str: str) -> str:
     if hours < 24:
         return f"{hours}h ago"
     return f"{hours // 24}d ago"
-
-
-def estimate_cost(model: str, cum_input: int, cum_output: int,
-                  cum_cache_read: int, cum_cache_creation: int,
-                  sub_input: int, sub_output: int,
-                  sub_cache_read: int, sub_cache_creation: int) -> str:
-    """Estimate session cost from cumulative tokens. Returns e.g. '$1.23'.
-
-    Applies correct per-type rates: base input, output, cache read (0.1x),
-    and cache creation (1.25x).
-    """
-    short = shorten_model(model)
-    rates = MODEL_RATES.get(short)
-    if not rates:
-        return ""
-    total_in = cum_input + sub_input
-    total_out = cum_output + sub_output
-    total_cache_read = cum_cache_read + sub_cache_read
-    total_cache_creation = cum_cache_creation + sub_cache_creation
-    if not total_in and not total_out and not total_cache_read and not total_cache_creation:
-        return ""
-    cost = (
-        total_in * rates[0]
-        + total_out * rates[1]
-        + total_cache_read * rates[2]
-        + total_cache_creation * rates[3]
-    ) / 1_000_000
-    if cost < 0.01:
-        return "<$0.01"
-    return f"${cost:.2f}"
 
 
 def format_tokens(total: int) -> str:
@@ -279,16 +228,6 @@ class SessionInfo:
         """Current context window usage (input tokens from latest turn)."""
         return self.input_tokens
 
-    @property
-    def estimated_cost(self) -> str:
-        """Estimate session cost from cumulative tokens."""
-        return estimate_cost(
-            self.model,
-            self.cumulative_input_tokens, self.cumulative_output_tokens,
-            self.cumulative_cache_read_tokens, self.cumulative_cache_creation_tokens,
-            self.subagent_input_tokens, self.subagent_output_tokens,
-            self.subagent_cache_read_tokens, self.subagent_cache_creation_tokens,
-        )
 
 
 # --- Helper functions ---
@@ -607,6 +546,8 @@ class SessionsDashboard(App):
 
     sort_mode: str = "activity"
     _sessions: list[SessionInfo] = []
+    _last_health_check: float = 0.0
+    _last_health: HealthStatus | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -654,11 +595,15 @@ class SessionsDashboard(App):
         self._repopulate_table()
         count = len(self._sessions)
         self.sub_title = f"{count} session{'s' if count != 1 else ''} · sorted by {self.sort_mode}"
-        # Health check
-        pids = get_claude_pids()
-        health = check_session_health(self._sessions, pids)
+        # Health check (throttled to every HEALTH_CHECK_INTERVAL seconds)
+        now = _time.monotonic()
+        if now - self._last_health_check >= HEALTH_CHECK_INTERVAL:
+            pids = get_claude_pids()
+            self._last_health = check_session_health(self._sessions, pids)
+            self._last_health_check = now
+        health = self._last_health
         bar = self.query_one("#health-bar", Static)
-        if health.has_mismatch:
+        if health and health.has_mismatch:
             bar.update(health.message)
             bar.add_class("visible")
         else:

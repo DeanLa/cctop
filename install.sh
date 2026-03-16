@@ -38,5 +38,12 @@ else
     echo "Installed cctop CLI to $BIN"
 fi
 
+# --- Check for jq ---
+if ! command -v jq >/dev/null 2>&1; then
+    echo ""
+    echo "WARNING: jq is not installed. The cctop hook requires jq to track sessions."
+    echo "Install it with: brew install jq (macOS) or apt install jq (Linux)"
+fi
+
 echo ""
 echo "Done ($MODE)! Run 'cctop' in a separate terminal to launch the dashboard."

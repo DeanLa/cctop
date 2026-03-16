@@ -29,7 +29,6 @@ from cctop_dashboard import (
     _render_message,
     format_tokens,
     format_relative_time,
-    estimate_cost,
     friendly_model_name,
     format_start_time,
     format_stop_reason,
@@ -134,22 +133,6 @@ def test_format_tokens_thousands():
 def test_format_tokens_large():
     assert format_tokens(110000) == "110k"
 
-
-def test_estimate_cost_sonnet():
-    # 100k base input + 50k output, no cache, no subagent
-    cost = estimate_cost("claude-sonnet-4-6-20260301", 100000, 50000, 0, 0, 0, 0, 0, 0)
-    assert cost.startswith("$")
-
-
-def test_estimate_cost_cache_read_much_cheaper():
-    # Same total tokens but as cache reads should be ~10x cheaper
-    base_cost = estimate_cost("claude-opus-4-6-v1", 1000000, 0, 0, 0, 0, 0, 0, 0)
-    cache_cost = estimate_cost("claude-opus-4-6-v1", 0, 0, 1000000, 0, 0, 0, 0, 0)
-    # base_cost = $5.00, cache_cost = $0.50
-    base_val = float(base_cost.strip("$"))
-    cache_val = float(cache_cost.strip("$"))
-    assert base_val == 5.00
-    assert cache_val == 0.50
 
 
 def test_format_relative_time_empty():
