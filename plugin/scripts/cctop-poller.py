@@ -408,19 +408,24 @@ def aggregate_subagent_tokens(
 def resolve_git_branch(cwd: str) -> str | None:
     """Resolve a meaningful branch name when HEAD is detached.
 
-    Tries, in order: exact tag, symbolic branch, short SHA.
+    Tries, in order:
+      1. Exact tag   → "\U0001f3f7\ufe0f v1.2.3"
+      2. Branch name → returned as-is (symbolic-ref succeeds only when not detached)
+      3. Short SHA   → "\U0001f500 abc1234"
+
     Returns None if all attempts fail or if cwd is not a git repo.
     """
     if not cwd or not Path(cwd).is_dir():
         return None
 
-    commands = [
-        ["git", "describe", "--tags", "--exact-match", "HEAD"],
-        ["git", "symbolic-ref", "--short", "HEAD"],
-        ["git", "rev-parse", "--short", "HEAD"],
+    # (command, prefix_if_detached)
+    attempts: list[tuple[list[str], str]] = [
+        (["git", "describe", "--tags", "--exact-match", "HEAD"], "\U0001f3f7\ufe0f "),
+        (["git", "symbolic-ref", "--short", "HEAD"], ""),
+        (["git", "rev-parse", "--short", "HEAD"], "\U0001f500 "),
     ]
 
-    for cmd in commands:
+    for cmd, prefix in attempts:
         try:
             result = subprocess.run(
                 cmd, cwd=cwd, capture_output=True, text=True, timeout=2,
@@ -428,7 +433,7 @@ def resolve_git_branch(cwd: str) -> str | None:
             if result.returncode == 0:
                 value = result.stdout.strip()
                 if value:
-                    return value
+                    return f"{prefix}{value}" if prefix else value
         except (OSError, subprocess.TimeoutExpired):
             continue
 

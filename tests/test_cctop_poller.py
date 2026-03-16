@@ -142,13 +142,13 @@ def _mock_run(outputs: dict[tuple[str, ...], tuple[int, str]]):
 class TestResolveGitBranch:
     """Verify resolve_git_branch() tries tag, branch, then short SHA."""
 
-    def test_returns_tag_when_exact_match(self, tmp_path):
+    def test_returns_tag_with_emoji_prefix(self, tmp_path):
         with patch.object(_mod, "subprocess") as mock_sp:
             mock_sp.run.side_effect = _mock_run({
                 ("git", "describe", "--tags", "--exact-match", "HEAD"): (0, "v1.2.3\n"),
             })
             mock_sp.TimeoutExpired = subprocess.TimeoutExpired
-            assert resolve_git_branch(str(tmp_path)) == "v1.2.3"
+            assert resolve_git_branch(str(tmp_path)) == "\U0001f3f7\ufe0f v1.2.3"
 
     def test_falls_back_to_symbolic_ref(self, tmp_path):
         with patch.object(_mod, "subprocess") as mock_sp:
@@ -159,7 +159,7 @@ class TestResolveGitBranch:
             mock_sp.TimeoutExpired = subprocess.TimeoutExpired
             assert resolve_git_branch(str(tmp_path)) == "main"
 
-    def test_falls_back_to_short_sha(self, tmp_path):
+    def test_falls_back_to_short_sha_with_emoji_prefix(self, tmp_path):
         with patch.object(_mod, "subprocess") as mock_sp:
             mock_sp.run.side_effect = _mock_run({
                 ("git", "describe", "--tags", "--exact-match", "HEAD"): (128, ""),
@@ -167,7 +167,7 @@ class TestResolveGitBranch:
                 ("git", "rev-parse", "--short", "HEAD"): (0, "abc1234\n"),
             })
             mock_sp.TimeoutExpired = subprocess.TimeoutExpired
-            assert resolve_git_branch(str(tmp_path)) == "abc1234"
+            assert resolve_git_branch(str(tmp_path)) == "\U0001f500 abc1234"
 
     def test_returns_none_when_all_fail(self, tmp_path):
         with patch.object(_mod, "subprocess") as mock_sp:
