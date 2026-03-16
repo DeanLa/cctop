@@ -43,7 +43,7 @@ If Claude is installed, `install.sh` also installs the Claude plugin automatical
 | `q` | Quit |
 | `r` | Force refresh |
 | `R` | Purge dead sessions (PID check + staleness fallback) |
-| `s` | Open sort picker (activity, name, status, duration, turns, tokens, tools, files, agents, errors) |
+| `s` | Open sort picker (activity, name, status, duration, started, turns, tokens, tools, files, agents, errors) |
 
 ### Columns
 
@@ -68,7 +68,7 @@ If Claude is installed, `install.sh` also installs the Claude plugin automatical
 
 For Codex sessions, live status and token usage are inferred from the Codex transcript stream. File edit counts and subagent metrics are currently Claude-only.
 
-Highlight any row to see a detail panel with the full working directory, git branch, token breakdown, files edited, subagent and error counts, the last user prompt, and Claude's last response.
+Highlight any row to see a detail panel with the full working directory, git branch, token breakdown, files edited, subagent and error counts, the last user prompt, and the latest assistant response.
 
 ### Session Lifecycle
 

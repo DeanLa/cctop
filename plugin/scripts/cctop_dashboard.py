@@ -43,6 +43,7 @@ SORT_OPTIONS: list[tuple[str, str]] = [
     ("slug", "Name"),
     ("status", "Status"),
     ("duration", "Duration"),
+    ("started", "Started"),
     ("turns", "Turns"),
     ("tokens", "Tokens"),
     ("tools", "Tool Count"),
@@ -523,9 +524,9 @@ class SortPicker(ModalScreen[str]):
 
 
 class SessionsDashboard(App):
-    """TUI dashboard for monitoring Claude Code sessions."""
+    """TUI dashboard for monitoring Claude Code and Codex sessions."""
 
-    TITLE = "Claude Sessions"
+    TITLE = "cctop Sessions"
 
     CSS = """
     #detail-scroll {
@@ -634,6 +635,8 @@ class SessionsDashboard(App):
             return s.status.lower()
         if self.sort_mode == "duration":
             return s.started_at or ""
+        if self.sort_mode == "started":
+            return s.started_at or ""
         if self.sort_mode == "turns":
             return s.turns
         if self.sort_mode == "tokens":
@@ -660,7 +663,7 @@ class SessionsDashboard(App):
                 pass
         table.clear()
         # Numeric/time sorts: largest first; alphabetical sorts: A-Z
-        reverse = self.sort_mode in ("activity", "duration", "turns", "tokens", "tools", "files", "agents", "errors")
+        reverse = self.sort_mode in ("activity", "duration", "started", "turns", "tokens", "tools", "files", "agents", "errors")
         ordered = sorted(self._sessions, key=self._sort_key, reverse=reverse)
         for s in ordered:
             project = s.project_name or (os.path.basename(s.cwd) if s.cwd else "")

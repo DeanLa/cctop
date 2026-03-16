@@ -36,6 +36,7 @@ CODEX_HOME = Path.home() / ".codex"
 CODEX_SESSIONS_DIR = CODEX_HOME / "sessions"
 CODEX_ARCHIVED_SESSIONS_DIR = CODEX_HOME / "archived_sessions"
 CODEX_SESSION_INDEX = CODEX_HOME / "session_index.jsonl"
+CODEX_DISCOVERY_LIMIT = 25
 POLL_INTERVAL = 1.0
 
 _shutdown = False
@@ -521,12 +522,11 @@ def read_codex_session_index() -> list[dict]:
             age = (now - datetime.fromisoformat(updated_at.replace("Z", "+00:00"))).total_seconds()
         except (ValueError, TypeError):
             continue
-        if age > STALE_SECONDS:
-            continue
+        obj["_age_seconds"] = age
         entries.append(obj)
 
     entries.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
-    return entries
+    return entries[:CODEX_DISCOVERY_LIMIT]
 
 
 def find_codex_transcript_path(session_id: str, updated_at: str) -> str:
@@ -571,7 +571,8 @@ def discover_codex_sessions() -> None:
         model = session_data.get("model", existing.get("model", ""))
         last_status = existing.get("status", "idle")
         if not existing:
-            last_status = "started"
+            age_seconds = entry.get("_age_seconds", 0)
+            last_status = "started" if age_seconds <= STALE_SECONDS else "idle"
 
         upsert_status_file(hook_fp, {
             "provider": "codex",

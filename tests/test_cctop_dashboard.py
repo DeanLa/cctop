@@ -26,6 +26,7 @@ from cctop_dashboard import (
     SessionInfo,
     SortPicker,
     HealthStatus,
+    SORT_OPTIONS,
     _render_message,
     provider_label,
     format_tokens,
@@ -292,12 +293,27 @@ async def test_sort_changes(fake_status_dir):
     async with app.run_test() as pilot:
         await pilot.press("s")
         await pilot.pause()
-        # Navigate to "Turns" (index 4) and select
         option_list = app.screen.query_one("#sort-list")
-        option_list.highlighted = 4  # "Turns"
+        turns_index = next(i for i, (key, _label) in enumerate(SORT_OPTIONS) if key == "turns")
+        option_list.highlighted = turns_index
         await pilot.press("enter")
         await pilot.pause()
         assert app.sort_mode == "turns"
+
+
+@pytest.mark.asyncio
+async def test_sort_by_started(fake_status_dir):
+    """Sorting by started should order newer sessions first."""
+    write_fake_session(fake_status_dir, "older-1111", started_at=_ago_iso(120))
+    write_fake_session(fake_status_dir, "newer-2222", started_at=_ago_iso(10))
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.sort_mode = "started"
+        app._repopulate_table()
+        table = app.query_one(DataTable)
+        first_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+        assert str(first_key.value) == "newer-2222"
 
 
 @pytest.mark.asyncio
