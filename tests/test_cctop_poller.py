@@ -18,6 +18,7 @@ _spec.loader.exec_module(_mod)
 
 parse_new_lines = _mod.parse_new_lines
 resolve_git_branch = _mod.resolve_git_branch
+is_git_worktree = _mod.is_git_worktree
 
 
 # --- Helpers ---
@@ -186,3 +187,53 @@ class TestResolveGitBranch:
 
     def test_returns_none_for_nonexistent_dir(self):
         assert resolve_git_branch("/nonexistent/path/xyz") is None
+
+
+# --- is_git_worktree tests ---
+
+
+def _mock_git_dirs(git_dir: str, common_dir: str):
+    """Create a side_effect for subprocess.run that simulates git-dir / git-common-dir."""
+    def side_effect(cmd, **kwargs):
+        key = tuple(cmd)
+        if key == ("git", "rev-parse", "--git-dir"):
+            return subprocess.CompletedProcess(cmd, 0, stdout=git_dir + "\n", stderr="")
+        if key == ("git", "rev-parse", "--git-common-dir"):
+            return subprocess.CompletedProcess(cmd, 0, stdout=common_dir + "\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="fatal")
+    return side_effect
+
+
+class TestIsGitWorktree:
+    """Verify worktree detection via git-dir vs git-common-dir."""
+
+    def test_worktree_detected(self, tmp_path):
+        with patch.object(_mod, "subprocess") as mock_sp:
+            mock_sp.run.side_effect = _mock_git_dirs(
+                "/repo/.git/worktrees/my-wt", "/repo/.git"
+            )
+            mock_sp.TimeoutExpired = subprocess.TimeoutExpired
+            assert is_git_worktree(str(tmp_path)) is True
+
+    def test_main_tree_not_detected(self, tmp_path):
+        with patch.object(_mod, "subprocess") as mock_sp:
+            mock_sp.run.side_effect = _mock_git_dirs("/repo/.git", "/repo/.git")
+            mock_sp.TimeoutExpired = subprocess.TimeoutExpired
+            assert is_git_worktree(str(tmp_path)) is False
+
+    def test_not_a_repo(self, tmp_path):
+        with patch.object(_mod, "subprocess") as mock_sp:
+            mock_sp.run.return_value = subprocess.CompletedProcess(
+                [], 128, stdout="", stderr="fatal: not a git repo"
+            )
+            mock_sp.TimeoutExpired = subprocess.TimeoutExpired
+            assert is_git_worktree(str(tmp_path)) is False
+
+    def test_returns_false_for_empty_cwd(self):
+        assert is_git_worktree("") is False
+
+    def test_returns_false_on_timeout(self, tmp_path):
+        with patch.object(_mod, "subprocess") as mock_sp:
+            mock_sp.run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=2)
+            mock_sp.TimeoutExpired = subprocess.TimeoutExpired
+            assert is_git_worktree(str(tmp_path)) is False

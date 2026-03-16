@@ -440,6 +440,26 @@ def resolve_git_branch(cwd: str) -> str | None:
     return None
 
 
+def is_git_worktree(cwd: str) -> bool:
+    """Check if the given directory is inside a git worktree (not the main tree)."""
+    if not cwd or not Path(cwd).is_dir():
+        return False
+    try:
+        git_dir = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=cwd, capture_output=True, text=True, timeout=2,
+        )
+        common_dir = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=cwd, capture_output=True, text=True, timeout=2,
+        )
+        if git_dir.returncode != 0 or common_dir.returncode != 0:
+            return False
+        return git_dir.stdout.strip() != common_dir.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 # --- Main loop ---
 
 
@@ -519,12 +539,13 @@ def poll_once() -> None:
         if lines:
             updates = parse_new_lines(lines)
 
-            # Resolve detached HEAD to a tag or short SHA;
-            # clear it if not a git repo at all
-            if updates.get("git_branch") == "HEAD":
+            # Enrich git branch: resolve detached HEAD, detect worktrees
+            if "git_branch" in updates:
                 cwd = hook_data.get("cwd", "")
-                resolved = resolve_git_branch(cwd)
-                updates["git_branch"] = resolved or ""
+                if updates["git_branch"] == "HEAD":
+                    updates["git_branch"] = resolve_git_branch(cwd) or ""
+                if updates["git_branch"] and is_git_worktree(cwd):
+                    updates["git_branch"] = "\U0001f33f " + updates["git_branch"]
 
             _accumulate_deltas(poller_data, updates)
             poller_data.update(updates)
