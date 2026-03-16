@@ -31,10 +31,10 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [x] **19.** Strong refresh: keybinding (e.g. Shift+R) and CLI flag (`cctop --reset`) that wipes `~/.cctop/`, re-scans all sessions from scratch
 
 ## Session Lifecycle
-- [ ] **20.** Increase stale threshold beyond 5 minutes `PR-E`
+- [x] **20.** Increase stale threshold beyond 5 minutes — PR-E (#3)
 - [x] **21.** Stale session cleanup via PID check instead of timeout heuristics
 - [ ] **22.** Session history, persist ended session stats (tokens, cost, turns, duration) for later querying `PR-I`
-- [ ] **23.** Fix branch showing "HEAD" for sessions in detached HEAD state, resolve to a meaningful name (tag, short SHA, or parent branch) `PR-E`
+- [x] **23.** Fix branch showing "HEAD" for sessions in detached HEAD state, resolve to a meaningful name (tag, short SHA, or parent branch) — PR-E (#3)
 
 ## UI & Theming
 - [ ] **24.** Persist selected theme to disk so it survives restarts (config file) `PR-J`

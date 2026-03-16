@@ -246,11 +246,11 @@ def test_purge_alive_pid(fake_status_dir):
 
 
 def test_purge_stale_no_pid(fake_status_dir):
-    """Session without pid field and last_activity 10min ago should be removed."""
+    """Session without pid field and last_activity 65min ago should be removed."""
     write_fake_session(
         fake_status_dir, "stale-3333",
-        last_activity=_ago_iso(10),
-        started_at=_ago_iso(30),
+        last_activity=_ago_iso(65),
+        started_at=_ago_iso(120),
     )
     count = purge_dead_sessions()
     assert count == 1

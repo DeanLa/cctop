@@ -10,7 +10,7 @@ last-read byte offset in the JSONL transcript and parses only new lines.
 Writes poller-owned fields to <id>.poller.json (separate from the hook's
 <id>.json). The dashboard merges both files. This eliminates write races.
 
-Poller-owned fields: slug, custom_title, git_branch, model, last_user_msg,
+Poller-owned fields: slug, custom_title, git_branch, project_name, model, last_user_msg,
   last_assistant_msg, input_tokens, output_tokens, turns, files_edited,
   subagent_count, error_count, stop_reason, cumulative_input_tokens,
   cumulative_output_tokens, cumulative_cache_read_tokens,
@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -201,7 +202,7 @@ def write_json(path: Path, data: dict) -> None:
 
 CLEANUP_INTERVAL = 30.0
 GRACE_PERIOD = 180  # 3 minutes — don't nuke sessions still spinning up
-STALE_SECONDS = 5 * 60
+STALE_SECONDS = 60 * 60
 
 
 def _is_pid_alive(pid: int) -> bool:
@@ -401,6 +402,73 @@ def aggregate_subagent_tokens(
     return total_input, total_output, total_cache_read, total_cache_creation, new_offsets
 
 
+# --- Git helpers ---
+
+
+def resolve_git_branch(cwd: str) -> str | None:
+    """Resolve a meaningful branch name when HEAD is detached.
+
+    Tries, in order:
+      1. Exact tag   → "\U0001f3f7\ufe0f v1.2.3"
+      2. Branch name → returned as-is (symbolic-ref succeeds only when not detached)
+      3. Short SHA   → "\U0001f500 abc1234"
+
+    Returns None if all attempts fail or if cwd is not a git repo.
+    """
+    if not cwd or not Path(cwd).is_dir():
+        return None
+
+    # (command, emoji_prefix)
+    attempts: list[tuple[list[str], str]] = [
+        (["git", "describe", "--tags", "--exact-match", "HEAD"], "\U0001f3f7\ufe0f "),
+        (["git", "symbolic-ref", "--short", "HEAD"], ""),
+        (["git", "rev-parse", "--short", "HEAD"], "\U0001f500 "),
+    ]
+
+    for cmd, prefix in attempts:
+        try:
+            result = subprocess.run(
+                cmd, cwd=cwd, capture_output=True, text=True, timeout=2,
+            )
+            if result.returncode == 0:
+                value = result.stdout.strip()
+                if value:
+                    return f"{prefix}{value}" if prefix else value
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+
+    return None
+
+
+def detect_worktree(cwd: str) -> str | None:
+    """If cwd is a git worktree, return the original repo basename. Otherwise None.
+
+    Compares git-dir vs git-common-dir; if they differ, it's a worktree.
+    The common dir's parent is the original repo root.
+    """
+    if not cwd or not Path(cwd).is_dir():
+        return None
+    try:
+        git_dir = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=cwd, capture_output=True, text=True, timeout=2,
+        )
+        common_dir = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=cwd, capture_output=True, text=True, timeout=2,
+        )
+        if git_dir.returncode != 0 or common_dir.returncode != 0:
+            return None
+        gd = git_dir.stdout.strip()
+        cd = common_dir.stdout.strip()
+        if gd == cd:
+            return None
+        # common_dir is like /path/to/repo/.git → parent is the repo root
+        return Path(cd).parent.name
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
 # --- Main loop ---
 
 
@@ -479,6 +547,23 @@ def poll_once() -> None:
 
         if lines:
             updates = parse_new_lines(lines)
+
+            # Enrich git branch: resolve detached HEAD, detect worktrees.
+            # For worktrees, prefix branch with 🌿 and override project_name
+            # to show the original repo name instead of the worktree dir.
+            if "git_branch" in updates:
+                cwd = hook_data.get("cwd", "")
+                if updates["git_branch"] == "HEAD":
+                    # resolve_git_branch returns None only when not a git
+                    # repo (rev-parse --short HEAD always succeeds otherwise),
+                    # so clearing to "" is correct for non-repo directories.
+                    updates["git_branch"] = resolve_git_branch(cwd) or ""
+                if cwd:
+                    repo_name = detect_worktree(cwd)
+                    if repo_name and updates["git_branch"]:
+                        updates["git_branch"] = "\U0001f33f " + updates["git_branch"]
+                        updates["project_name"] = repo_name
+
             _accumulate_deltas(poller_data, updates)
             poller_data.update(updates)
             changed = True
