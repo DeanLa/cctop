@@ -35,7 +35,7 @@ cctop gives you one screen to see all of them.
 | `q` | Quit |
 | `r` | Force refresh |
 | `R` | Purge dead sessions (PID check + staleness fallback) |
-| `s` | Open sort picker (activity, name, status, duration, turns, tokens, tools, errors) |
+| `s` | Open sort picker (activity, name, status, duration, turns, tokens, tools, files, agents, errors) |
 
 ### Columns
 
@@ -58,7 +58,7 @@ cctop gives you one screen to see all of them.
 | **Started** | Session start time (e.g. "14:30") |
 | **Activity** | Time since last event (e.g. "2m ago") |
 
-Highlight any row to see a detail panel with the full working directory, git branch, token breakdown, the last user prompt, and Claude's last response.
+Highlight any row to see a detail panel with the full working directory, git branch, token breakdown, files edited, subagent and error counts, the last user prompt, and Claude's last response.
 
 ### Session Lifecycle
 
