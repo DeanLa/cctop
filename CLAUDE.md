@@ -17,7 +17,7 @@ Installs a lightweight hook into Claude Code that tracks session activity in rea
 - **Model**, which Claude model each session is using
 - **Last messages**, peek at the most recent user prompt and Claude response without switching terminals
 
-Sessions that go quiet for 5+ minutes are marked stale. Sessions that end clean up after themselves automatically.
+Sessions that go quiet for 1+ hour are marked stale. Sessions that end clean up after themselves automatically.
 
 ## Who It's For
 

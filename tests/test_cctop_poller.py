@@ -2,7 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pytest>=8.0"]
 # ///
-"""Tests for the cctop poller — parse_new_lines() and resolve_git_branch()."""
+"""Tests for the cctop poller — parse_new_lines(), resolve_git_branch(), and detect_worktree()."""
 from __future__ import annotations
 
 import importlib.util
@@ -189,7 +189,7 @@ class TestResolveGitBranch:
         assert resolve_git_branch("/nonexistent/path/xyz") is None
 
 
-# --- is_git_worktree tests ---
+# --- detect_worktree tests ---
 
 
 def _mock_git_dirs(git_dir: str, common_dir: str):

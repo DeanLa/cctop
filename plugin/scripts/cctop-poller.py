@@ -10,7 +10,7 @@ last-read byte offset in the JSONL transcript and parses only new lines.
 Writes poller-owned fields to <id>.poller.json (separate from the hook's
 <id>.json). The dashboard merges both files. This eliminates write races.
 
-Poller-owned fields: slug, custom_title, git_branch, model, last_user_msg,
+Poller-owned fields: slug, custom_title, git_branch, project_name, model, last_user_msg,
   last_assistant_msg, input_tokens, output_tokens, turns, files_edited,
   subagent_count, error_count, stop_reason, cumulative_input_tokens,
   cumulative_output_tokens, cumulative_cache_read_tokens,
@@ -418,7 +418,7 @@ def resolve_git_branch(cwd: str) -> str | None:
     if not cwd or not Path(cwd).is_dir():
         return None
 
-    # (command, prefix_if_detached)
+    # (command, emoji_prefix)
     attempts: list[tuple[list[str], str]] = [
         (["git", "describe", "--tags", "--exact-match", "HEAD"], "\U0001f3f7\ufe0f "),
         (["git", "symbolic-ref", "--short", "HEAD"], ""),
@@ -548,15 +548,20 @@ def poll_once() -> None:
         if lines:
             updates = parse_new_lines(lines)
 
-            # Enrich git branch: resolve detached HEAD, detect worktrees
+            # Enrich git branch: resolve detached HEAD, detect worktrees.
+            # For worktrees, prefix branch with 🌿 and override project_name
+            # to show the original repo name instead of the worktree dir.
             if "git_branch" in updates:
                 cwd = hook_data.get("cwd", "")
                 if updates["git_branch"] == "HEAD":
-                    updates["git_branch"] = resolve_git_branch(cwd) or ""
-                repo_name = detect_worktree(cwd)
-                if repo_name and updates["git_branch"]:
-                    updates["git_branch"] = "\U0001f33f " + updates["git_branch"]
-                    updates["project_name"] = repo_name
+                    resolved = resolve_git_branch(cwd)
+                    if resolved:
+                        updates["git_branch"] = resolved
+                if cwd:
+                    repo_name = detect_worktree(cwd)
+                    if repo_name and updates["git_branch"]:
+                        updates["git_branch"] = "\U0001f33f " + updates["git_branch"]
+                        updates["project_name"] = repo_name
 
             _accumulate_deltas(poller_data, updates)
             poller_data.update(updates)
