@@ -71,6 +71,13 @@ def _render_message(label: str, text: str | None, max_chars: int = 500) -> list[
     ]
 
 
+def provider_label(provider: str) -> tuple[str, str]:
+    """Return short provider badge text and color."""
+    if provider == "codex":
+        return ("CDX", "#5fd7ff")
+    return ("CLD", "#e0af68")
+
+
 STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "idle": ("green", "idle"),
     "thinking": ("yellow", "thinking"),
@@ -661,8 +668,17 @@ class SessionsDashboard(App):
             ctx_pct = f"{ctx * 100 // s.context_window}%" if ctx and s.context_window else ""
             tokens = format_tokens(ctx)
             errors_cell = Text(str(s.error_count), style="red") if s.error_count else ""
+            badge_text, badge_color = provider_label(s.provider)
             table.add_row(
-                Text.assemble(("● ", "#e0af68"), s.custom_title) if s.custom_title else Text.assemble(("○ ", "dim"), s.session_id[:8]),
+                Text.assemble(
+                    (f"[{badge_text}] ", badge_color),
+                    ("● ", "#e0af68"),
+                    (s.custom_title, "none"),
+                ) if s.custom_title else Text.assemble(
+                    (f"[{badge_text}] ", badge_color),
+                    ("○ ", "dim"),
+                    (s.session_id[:8], "none"),
+                ),
                 project,
                 s.git_branch[:20],
                 styled_status(s.status, s.last_activity),
@@ -717,6 +733,7 @@ class SessionsDashboard(App):
 
         # Info metadata
         meta_parts: list[str] = []
+        meta_parts.append(f"Provider: {session.provider}")
         if session.model:
             meta_parts.append(f"Model: {session.model}")
         if session.files_edited:
@@ -735,7 +752,8 @@ class SessionsDashboard(App):
             Text(""),
         ]
         parts.extend(_render_message("User", session.last_user_msg, 300))
-        parts.extend(_render_message("Claude", session.last_assistant_msg, 800))
+        assistant_label = "Codex" if session.provider == "codex" else "Claude"
+        parts.extend(_render_message(assistant_label, session.last_assistant_msg, 800))
 
         if meta_parts:
             parts.append(Text.from_markup(f"[dim]Info:[/dim]   {'  '.join(meta_parts)}"))

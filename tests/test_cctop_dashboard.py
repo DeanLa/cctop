@@ -27,6 +27,7 @@ from cctop_dashboard import (
     SortPicker,
     HealthStatus,
     _render_message,
+    provider_label,
     format_tokens,
     format_relative_time,
     friendly_model_name,
@@ -174,6 +175,14 @@ def test_friendly_model_name_empty():
 
 def test_friendly_model_name_gpt5():
     assert friendly_model_name("gpt-5.4") == "gpt-5.4"
+
+
+def test_provider_label_claude():
+    assert provider_label("claude") == ("CLD", "#e0af68")
+
+
+def test_provider_label_codex():
+    assert provider_label("codex") == ("CDX", "#5fd7ff")
 
 
 # --- format_start_time tests ---
@@ -454,6 +463,26 @@ async def test_detail_panel_shows_user_and_assistant(fake_status_dir):
         assert "Claude" in rendered
         assert "my user question" in rendered
         assert "my assistant answer" in rendered
+
+
+@pytest.mark.asyncio
+async def test_detail_panel_shows_codex_provider(fake_status_dir):
+    """Codex sessions should show Codex-specific provider metadata and label."""
+    write_fake_session(
+        fake_status_dir, "codex-1111",
+        provider="codex",
+        model="gpt-5.4",
+        last_user_msg="inspect this branch",
+        last_assistant_msg="working on it",
+    )
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        detail = app.query_one("#detail", Static)
+        rendered = _render_static_text(detail)
+        assert "Provider: codex" in rendered
+        assert "Codex" in rendered
+        assert "working on it" in rendered
 
 
 @pytest.mark.asyncio
