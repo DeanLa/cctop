@@ -26,6 +26,7 @@ Anyone running more than one Claude Code session at a time, or anyone who wants 
 ## Project Structure
 
 - `plugin/`, distribution files (only this directory gets installed)
+  - `plugin/commands/register.md`, `/register` slash command, manually registers a session with cctop
   - `plugin/scripts/cctop-hook.sh`, hook handler, writes `~/.cctop/<session-id>.json`
   - `plugin/scripts/cctop_dashboard.py`, Textual TUI app (run with `uv run --script`)
   - `plugin/scripts/cctop-poller.py`, background transcript poller
