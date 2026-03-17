@@ -20,7 +20,7 @@ import sys
 import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 
 from rich.console import Group
 from rich.markdown import Markdown as RichMarkdown
@@ -253,15 +253,13 @@ def styled_status(raw: str, last_activity: str) -> Text:
     return Text(raw or "?", style="dim")
 
 
-_SESSION_FIELDS = {f.name for f in fields(SessionInfo)}
-
-
 def load_sessions() -> list[SessionInfo]:
     """Read hook JSON + poller JSON per session and merge them."""
     sessions: list[SessionInfo] = []
     if not STATUS_DIR.is_dir():
         return sessions
 
+    # First pass: collect all sessions
     for fp in STATUS_DIR.glob("*.json"):
         if fp.name.endswith(".poller.json"):
             continue
@@ -275,19 +273,39 @@ def load_sessions() -> list[SessionInfo]:
             poller = json.loads(poller_fp.read_text())
         except (OSError, json.JSONDecodeError):
             poller = {}
-
-        # Merge: poller values win over hook for overlapping keys
-        merged = {**hook, **poller}
-        # Special cases: fallback logic, type checks, transforms
         raw_pid = hook.get("pid")
-        merged["session_id"] = sid
-        merged["pid"] = raw_pid if isinstance(raw_pid, int) else None
-        merged["tool_count"] = poller.get("tool_count", 0) or hook.get("tool_count", 0)
-        merged["model"] = poller.get("model", "") or hook.get("model", "")
-        merged["last_user_msg"] = _clean_user_msg(poller.get("last_user_msg", ""))
-        merged["running_agents"] = hook.get("running_agents", 0)
-
-        info = SessionInfo(**{k: v for k, v in merged.items() if k in _SESSION_FIELDS})
+        info = SessionInfo(
+            session_id=sid,
+            cwd=hook.get("cwd", ""),
+            status=hook.get("status", ""),
+            last_activity=hook.get("last_activity", ""),
+            started_at=hook.get("started_at", ""),
+            pid=raw_pid if isinstance(raw_pid, int) else None,
+            tool_count=poller.get("tool_count", 0) or hook.get("tool_count", 0),
+            slug=poller.get("slug", ""),
+            git_branch=poller.get("git_branch", ""),
+            project_name=poller.get("project_name", ""),
+            model=poller.get("model", "") or hook.get("model", ""),
+            last_user_msg=_clean_user_msg(poller.get("last_user_msg", "")),
+            last_assistant_msg=poller.get("last_assistant_msg", ""),
+            input_tokens=poller.get("input_tokens", 0),
+            output_tokens=poller.get("output_tokens", 0),
+            custom_title=poller.get("custom_title", ""),
+            turns=poller.get("turns", 0),
+            files_edited=poller.get("files_edited"),
+            subagent_count=poller.get("subagent_count", 0),
+            error_count=poller.get("error_count", 0),
+            stop_reason=poller.get("stop_reason", ""),
+            running_agents=hook.get("running_agents", 0),
+            cumulative_input_tokens=poller.get("cumulative_input_tokens", 0),
+            cumulative_output_tokens=poller.get("cumulative_output_tokens", 0),
+            cumulative_cache_read_tokens=poller.get("cumulative_cache_read_tokens", 0),
+            cumulative_cache_creation_tokens=poller.get("cumulative_cache_creation_tokens", 0),
+            subagent_input_tokens=poller.get("subagent_input_tokens", 0),
+            subagent_output_tokens=poller.get("subagent_output_tokens", 0),
+            subagent_cache_read_tokens=poller.get("subagent_cache_read_tokens", 0),
+            subagent_cache_creation_tokens=poller.get("subagent_cache_creation_tokens", 0),
+        )
         sessions.append(info)
 
     return sessions
