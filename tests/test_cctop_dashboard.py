@@ -34,6 +34,7 @@ from cctop_dashboard import (
     format_stop_reason,
     get_claude_pids,
     check_session_health,
+    load_sessions,
     purge_dead_sessions,
     STATUS_DIR,
 )
@@ -47,6 +48,23 @@ def _now_iso() -> str:
 
 def _ago_iso(minutes: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+
+
+async def _wait_for_rows(pilot, app, *, expected: int = 1, retries: int = 20):
+    """Wait for the worker thread to deliver results to the table.
+
+    For expected > 0, waits until row_count >= expected.
+    For expected == 0, waits until row_count == 0 (after being non-zero).
+    """
+    table = app.query_one(DataTable)
+    for _ in range(retries):
+        await pilot.pause()
+        if expected == 0 and table.row_count == 0:
+            return
+        if expected > 0 and table.row_count >= expected:
+            return
+    # Final pause to settle
+    await pilot.pause()
 
 
 def write_fake_session(tmpdir: Path, sid: str, *,
@@ -254,7 +272,7 @@ async def test_sessions_render(fake_status_dir):
     write_fake_session(fake_status_dir, "bbbb-2222", turns=7)
     app = SessionsDashboard()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _wait_for_rows(pilot, app, expected=2)
         table = app.query_one(DataTable)
         assert table.row_count == 2
 
@@ -291,7 +309,7 @@ async def test_detail_panel_updates(fake_status_dir):
     write_fake_session(fake_status_dir, "aaaa-1111", cwd="/home/user/myproject")
     app = SessionsDashboard()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _wait_for_rows(pilot, app)
         detail = app.query_one("#detail", Static)
         # The first row should auto-highlight and populate detail
         rendered = _render_static_text(detail)
@@ -305,7 +323,7 @@ async def test_running_agents_column(fake_status_dir):
     write_fake_session(fake_status_dir, "agent-2222", running_agents=0)
     app = SessionsDashboard()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _wait_for_rows(pilot, app, expected=2)
         table = app.query_one(DataTable)
         assert table.row_count == 2
         # Verify the running_agents field was loaded from hook JSON
@@ -320,12 +338,152 @@ async def test_sort_by_files(fake_status_dir):
     write_fake_session(fake_status_dir, "many-files", files_edited=["a.py", "b.py", "c.py"])
     app = SessionsDashboard()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _wait_for_rows(pilot, app, expected=2)
         app.sort_mode = "files"
         table = app.query_one(DataTable)
         # First row should be the session with more files
         first_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
         assert str(first_key.value) == "many-files"
+
+
+# --- load_sessions unit tests ---
+
+
+def test_load_sessions_basic(fake_status_dir):
+    """Basic hook + poller pair should produce a correct SessionInfo."""
+    write_fake_session(fake_status_dir, "sess-1111", turns=7, tool_count=15,
+                       model="claude-opus-4-6-v1[1m]", git_branch="feature/x",
+                       running_agents=2, error_count=3, files_edited=["a.py", "b.py"])
+    sessions = load_sessions()
+    assert len(sessions) == 1
+    s = sessions[0]
+    assert s.session_id == "sess-1111"
+    assert s.turns == 7
+    assert s.tool_count == 15
+    assert s.model == "claude-opus-4-6-v1[1m]"
+    assert s.git_branch == "feature/x"
+    assert s.running_agents == 2
+    assert s.error_count == 3
+    assert s.files_edited == ["a.py", "b.py"]
+
+
+def test_load_sessions_poller_wins_over_hook(fake_status_dir):
+    """Poller values should override hook values for shared keys like model."""
+    hook = {"session_id": "merge-test", "cwd": "/tmp", "status": "idle",
+            "last_activity": _now_iso(), "started_at": _ago_iso(10),
+            "model": "hook-model", "tool_count": 5, "running_agents": 0}
+    poller = {"model": "poller-model", "tool_count": 20, "slug": "test-slug",
+              "git_branch": "main", "last_user_msg": "hi", "last_assistant_msg": "hello",
+              "input_tokens": 1000, "output_tokens": 500, "turns": 3, "custom_title": "",
+              "cumulative_input_tokens": 0, "cumulative_output_tokens": 0,
+              "subagent_input_tokens": 0, "subagent_output_tokens": 0,
+              "error_count": 0, "subagent_count": 0, "files_edited": None, "stop_reason": ""}
+    (fake_status_dir / "merge-test.json").write_text(json.dumps(hook))
+    (fake_status_dir / "merge-test.poller.json").write_text(json.dumps(poller))
+    sessions = load_sessions()
+    assert len(sessions) == 1
+    s = sessions[0]
+    # model: poller wins (both non-empty, poller takes priority)
+    assert s.model == "poller-model"
+    # tool_count: poller wins via or-fallback (poller non-zero)
+    assert s.tool_count == 20
+    # running_agents: always from hook
+    assert s.running_agents == 0
+
+
+def test_load_sessions_model_fallback_to_hook(fake_status_dir):
+    """If poller model is empty, should fall back to hook model."""
+    hook = {"session_id": "fb-test", "cwd": "/tmp", "status": "idle",
+            "last_activity": _now_iso(), "started_at": _ago_iso(5),
+            "model": "hook-model", "tool_count": 0, "running_agents": 0}
+    poller = {"model": "", "slug": "test", "git_branch": "", "last_user_msg": "",
+              "last_assistant_msg": "", "input_tokens": 0, "output_tokens": 0,
+              "tool_count": 0, "turns": 0, "custom_title": "",
+              "cumulative_input_tokens": 0, "cumulative_output_tokens": 0,
+              "subagent_input_tokens": 0, "subagent_output_tokens": 0,
+              "error_count": 0, "subagent_count": 0, "files_edited": None, "stop_reason": ""}
+    (fake_status_dir / "fb-test.json").write_text(json.dumps(hook))
+    (fake_status_dir / "fb-test.poller.json").write_text(json.dumps(poller))
+    sessions = load_sessions()
+    assert sessions[0].model == "hook-model"
+
+
+def test_load_sessions_tool_count_fallback(fake_status_dir):
+    """If poller tool_count is 0, should fall back to hook tool_count."""
+    hook = {"session_id": "tc-test", "cwd": "/tmp", "status": "idle",
+            "last_activity": _now_iso(), "started_at": _ago_iso(5),
+            "model": "", "tool_count": 8, "running_agents": 0}
+    poller = {"model": "", "slug": "test", "git_branch": "", "last_user_msg": "",
+              "last_assistant_msg": "", "input_tokens": 0, "output_tokens": 0,
+              "tool_count": 0, "turns": 0, "custom_title": "",
+              "cumulative_input_tokens": 0, "cumulative_output_tokens": 0,
+              "subagent_input_tokens": 0, "subagent_output_tokens": 0,
+              "error_count": 0, "subagent_count": 0, "files_edited": None, "stop_reason": ""}
+    (fake_status_dir / "tc-test.json").write_text(json.dumps(hook))
+    (fake_status_dir / "tc-test.poller.json").write_text(json.dumps(poller))
+    sessions = load_sessions()
+    assert sessions[0].tool_count == 8
+
+
+def test_load_sessions_pid_type_check(fake_status_dir):
+    """Non-int pid values should become None."""
+    hook = {"session_id": "pid-test", "cwd": "/tmp", "status": "idle",
+            "last_activity": _now_iso(), "started_at": _ago_iso(5),
+            "model": "", "tool_count": 0, "running_agents": 0, "pid": "not-an-int"}
+    (fake_status_dir / "pid-test.json").write_text(json.dumps(hook))
+    sessions = load_sessions()
+    assert sessions[0].pid is None
+
+
+def test_load_sessions_pid_int(fake_status_dir):
+    """Int pid should be preserved."""
+    hook = {"session_id": "pid-ok", "cwd": "/tmp", "status": "idle",
+            "last_activity": _now_iso(), "started_at": _ago_iso(5),
+            "model": "", "tool_count": 0, "running_agents": 0, "pid": 12345}
+    (fake_status_dir / "pid-ok.json").write_text(json.dumps(hook))
+    sessions = load_sessions()
+    assert sessions[0].pid == 12345
+
+
+def test_load_sessions_cleans_user_msg(fake_status_dir):
+    """System-injected messages (starting with <) should be cleaned."""
+    write_fake_session(fake_status_dir, "msg-test", last_user_msg="<system-reminder>stuff</system-reminder>")
+    sessions = load_sessions()
+    assert sessions[0].last_user_msg == ""
+
+
+def test_load_sessions_extra_json_keys_ignored(fake_status_dir):
+    """Extra keys in hook/poller JSON that don't map to SessionInfo fields should be ignored."""
+    hook = {"session_id": "extra-test", "cwd": "/tmp", "status": "idle",
+            "last_activity": _now_iso(), "started_at": _ago_iso(5),
+            "model": "", "tool_count": 0, "running_agents": 0,
+            "unknown_field": "should be ignored", "another_extra": 42}
+    (fake_status_dir / "extra-test.json").write_text(json.dumps(hook))
+    sessions = load_sessions()
+    assert len(sessions) == 1
+    assert sessions[0].session_id == "extra-test"
+
+
+def test_load_sessions_no_poller_file(fake_status_dir):
+    """Missing poller file should still load from hook with defaults."""
+    hook = {"session_id": "hook-only", "cwd": "/tmp/proj", "status": "thinking",
+            "last_activity": _now_iso(), "started_at": _ago_iso(10),
+            "model": "claude-sonnet-4-6-20260301", "tool_count": 3, "running_agents": 1}
+    (fake_status_dir / "hook-only.json").write_text(json.dumps(hook))
+    sessions = load_sessions()
+    assert len(sessions) == 1
+    s = sessions[0]
+    assert s.status == "thinking"
+    assert s.model == "claude-sonnet-4-6-20260301"
+    assert s.tool_count == 3
+    assert s.running_agents == 1
+    assert s.turns == 0  # default
+
+
+def test_load_sessions_empty_dir(fake_status_dir):
+    """Empty status dir should return empty list."""
+    sessions = load_sessions()
+    assert sessions == []
 
 
 # --- Purge dead sessions tests ---
@@ -378,11 +536,11 @@ async def test_purge_keybinding(fake_status_dir):
     write_fake_session(fake_status_dir, "dead-5555", pid=99999)
     app = SessionsDashboard()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _wait_for_rows(pilot, app)
         table = app.query_one(DataTable)
         assert table.row_count == 1
         await pilot.press("R")
-        await pilot.pause()
+        await _wait_for_rows(pilot, app, expected=0)
         assert table.row_count == 0
 
 
@@ -440,7 +598,7 @@ async def test_detail_panel_shows_user_and_assistant(fake_status_dir):
     )
     app = SessionsDashboard()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _wait_for_rows(pilot, app)
         detail = app.query_one("#detail", Static)
         rendered = _render_static_text(detail)
         assert "User" in rendered
@@ -455,13 +613,13 @@ async def test_detail_panel_clears_when_sessions_removed(fake_status_dir):
     write_fake_session(fake_status_dir, "temp-1111", pid=99999)
     app = SessionsDashboard()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _wait_for_rows(pilot, app)
         detail = app.query_one("#detail", Static)
         # Detail should have content from the highlighted session
         assert isinstance(detail.content, Group)
         # Purge the dead session
         await pilot.press("R")
-        await pilot.pause()
+        await _wait_for_rows(pilot, app, expected=0)
         # Detail should now be empty
         assert str(detail.content) == ""
 
@@ -656,7 +814,7 @@ async def test_health_bar_shows_on_mismatch(fake_status_dir):
     app = SessionsDashboard()
     with patch("cctop_dashboard.get_claude_pids", return_value=set()):
         async with app.run_test() as pilot:
-            await pilot.pause()
+            await _wait_for_rows(pilot, app)
             bar = app.query_one("#health-bar", Static)
             assert "visible" in bar.classes
             rendered = _render_static_text(bar)
@@ -671,7 +829,7 @@ async def test_health_bar_hidden_when_matching(fake_status_dir):
     app = SessionsDashboard()
     with patch("cctop_dashboard.get_claude_pids", return_value={my_pid}):
         async with app.run_test() as pilot:
-            await pilot.pause()
+            await _wait_for_rows(pilot, app)
             bar = app.query_one("#health-bar", Static)
             assert "visible" not in bar.classes
 
@@ -685,7 +843,7 @@ async def test_health_bar_shows_untracked(fake_status_dir):
     # Return our PID plus two extras not in cctop
     with patch("cctop_dashboard.get_claude_pids", return_value={my_pid, 88888, 77777}):
         async with app.run_test() as pilot:
-            await pilot.pause()
+            await _wait_for_rows(pilot, app)
             bar = app.query_one("#health-bar", Static)
             assert "visible" in bar.classes
             rendered = _render_static_text(bar)
