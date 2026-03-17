@@ -36,6 +36,8 @@ from cctop_dashboard import (
     check_session_health,
     purge_dead_sessions,
     STATUS_DIR,
+    DEFAULT_CONTEXT_WINDOW,
+    MODEL_CONTEXT_WINDOWS,
 )
 
 
@@ -691,3 +693,49 @@ async def test_health_bar_shows_untracked(fake_status_dir):
             assert "visible" in bar.classes
             rendered = _render_static_text(bar)
             assert "not tracked" in rendered
+
+
+# --- context_window property tests ---
+
+
+def test_context_window_opus():
+    """Opus models should resolve to 1M context window."""
+    s = SessionInfo(model="claude-opus-4-6-v1[1m]")
+    assert s.context_window == 1_000_000
+
+
+def test_context_window_sonnet():
+    """Sonnet models should resolve to 200K context window."""
+    s = SessionInfo(model="claude-sonnet-4-6-20260301")
+    assert s.context_window == 200_000
+
+
+def test_context_window_haiku():
+    """Haiku models should resolve to 200K context window."""
+    s = SessionInfo(model="claude-haiku-4-5-20251001")
+    assert s.context_window == 200_000
+
+
+def test_context_window_unknown_model():
+    """Unknown models should fall back to DEFAULT_CONTEXT_WINDOW."""
+    s = SessionInfo(model="gpt-4o-mini")
+    assert s.context_window == DEFAULT_CONTEXT_WINDOW
+
+
+def test_context_window_empty_model():
+    """Empty model string should fall back to DEFAULT_CONTEXT_WINDOW."""
+    s = SessionInfo(model="")
+    assert s.context_window == DEFAULT_CONTEXT_WINDOW
+
+
+@pytest.mark.asyncio
+async def test_ctx_pct_opus_session(fake_status_dir):
+    """Opus session with 50K input tokens should show ~5%, not 25%."""
+    write_fake_session(fake_status_dir, "opus-1111", model="claude-opus-4-6-v1[1m]")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        s = next(s for s in app._sessions if s.session_id == "opus-1111")
+        # 50000 input_tokens / 1_000_000 = 5%
+        assert s.context_window == 1_000_000
+        assert s.input_tokens * 100 // s.context_window == 5

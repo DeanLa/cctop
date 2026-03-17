@@ -35,7 +35,12 @@ from textual.widgets.option_list import Option
 # --- Constants ---
 
 STATUS_DIR = Path.home() / ".cctop"
-CONTEXT_WINDOW = 200_000
+DEFAULT_CONTEXT_WINDOW = 200_000
+MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "opus": 1_000_000,
+    "sonnet": 200_000,
+    "haiku": 200_000,
+}
 STALE_SECONDS = 60 * 60
 HEALTH_CHECK_INTERVAL = 10.0  # seconds between ps-based health checks
 SORT_OPTIONS: list[tuple[str, str]] = [
@@ -69,6 +74,51 @@ def _render_message(label: str, text: str | None, max_chars: int = 500) -> list[
         Text.from_markup(f"[dim]{label}:[/dim]"),
         RichMarkdown(text),
     ]
+
+
+def _render_token_breakdown(session: SessionInfo) -> list[Text]:
+    """Render cumulative token breakdown with cache percentages."""
+    fresh = session.cumulative_input_tokens
+    cache_create = session.cumulative_cache_creation_tokens
+    cache_read = session.cumulative_cache_read_tokens
+    output = session.cumulative_output_tokens
+    total_input = fresh + cache_create + cache_read
+
+    if total_input == 0 and output == 0:
+        return []
+
+    parts: list[Text] = [Text.from_markup("[dim]Tokens (cumulative):[/dim]")]
+
+    if total_input > 0:
+        fresh_pct = fresh * 100 / total_input
+        create_pct = cache_create * 100 / total_input
+        read_pct = cache_read * 100 / total_input
+        parts.append(Text.from_markup(
+            f"  Fresh input:     {fresh:>10,}  ({fresh_pct:4.1f}%)"
+        ))
+        parts.append(Text.from_markup(
+            f"  Cache creation:  {cache_create:>10,}  ({create_pct:4.1f}%)"
+        ))
+        parts.append(Text.from_markup(
+            f"  Cache read:      {cache_read:>10,}  ({read_pct:4.1f}%)"
+        ))
+    parts.append(Text.from_markup(
+        f"  Output:          {output:>10,}"
+    ))
+
+    # Subagent tokens
+    sub_fresh = session.subagent_input_tokens
+    sub_create = session.subagent_cache_creation_tokens
+    sub_read = session.subagent_cache_read_tokens
+    sub_output = session.subagent_output_tokens
+    if sub_fresh or sub_create or sub_read or sub_output:
+        parts.append(Text.from_markup("[dim]Subagent tokens:[/dim]"))
+        parts.append(Text.from_markup(f"  Fresh input:     {sub_fresh:>10,}"))
+        parts.append(Text.from_markup(f"  Cache creation:  {sub_create:>10,}"))
+        parts.append(Text.from_markup(f"  Cache read:      {sub_read:>10,}"))
+        parts.append(Text.from_markup(f"  Output:          {sub_output:>10,}"))
+
+    return parts
 
 
 STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
@@ -224,9 +274,28 @@ class SessionInfo:
     subagent_cache_creation_tokens: int = 0
 
     @property
+    def context_window(self) -> int:
+        """Resolve context window size from the session's model."""
+        if self.model:
+            for family, window in MODEL_CONTEXT_WINDOWS.items():
+                if family in self.model:
+                    return window
+        return DEFAULT_CONTEXT_WINDOW
+
+    @property
     def context_tokens(self) -> int:
         """Current context window usage (input tokens from latest turn)."""
         return self.input_tokens
+
+    @property
+    def total_tokens(self) -> int:
+        """Cumulative total tokens consumed across the session."""
+        return (
+            self.cumulative_input_tokens
+            + self.cumulative_output_tokens
+            + self.cumulative_cache_read_tokens
+            + self.cumulative_cache_creation_tokens
+        )
 
 
 
@@ -620,7 +689,7 @@ class SessionsDashboard(App):
         if self.sort_mode == "turns":
             return s.turns
         if self.sort_mode == "tokens":
-            return s.context_tokens
+            return s.total_tokens
         if self.sort_mode == "tools":
             return s.tool_count
         if self.sort_mode == "files":
@@ -648,8 +717,8 @@ class SessionsDashboard(App):
         for s in ordered:
             project = s.project_name or (os.path.basename(s.cwd) if s.cwd else "")
             ctx = s.context_tokens
-            ctx_pct = f"{ctx * 100 // CONTEXT_WINDOW}%" if ctx else ""
-            tokens = format_tokens(ctx)
+            ctx_pct = f"{ctx * 100 // s.context_window}%" if ctx else ""
+            tokens = format_tokens(s.total_tokens)
             errors_cell = Text(str(s.error_count), style="red") if s.error_count else ""
             table.add_row(
                 Text.assemble(("● ", "#e0af68"), s.custom_title) if s.custom_title else Text.assemble(("○ ", "dim"), s.session_id[:8]),
@@ -697,7 +766,7 @@ class SessionsDashboard(App):
             return
 
         # Line 1: path, branch, tokens
-        tokens = format_tokens(session.context_tokens)
+        tokens = format_tokens(session.total_tokens)
         header_parts = [f"[bold]{session.cwd or '?'}[/bold]"]
         if session.git_branch:
             header_parts.append(f"  [cyan]{session.git_branch}[/cyan]")
@@ -729,6 +798,11 @@ class SessionsDashboard(App):
 
         if meta_parts:
             parts.append(Text.from_markup(f"[dim]Info:[/dim]   {'  '.join(meta_parts)}"))
+
+        token_parts = _render_token_breakdown(session)
+        if token_parts:
+            parts.append(Text(""))
+            parts.extend(token_parts)
 
         detail.update(Group(*parts))
 
