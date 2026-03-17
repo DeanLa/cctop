@@ -26,7 +26,9 @@ from cctop_dashboard import (
     SessionInfo,
     SortPicker,
     HealthStatus,
+    SORT_OPTIONS,
     _render_message,
+    provider_label,
     format_tokens,
     format_relative_time,
     friendly_model_name,
@@ -52,6 +54,7 @@ def _ago_iso(minutes: int) -> str:
 def write_fake_session(tmpdir: Path, sid: str, *,
                        cwd: str = "/tmp/proj",
                        status: str = "idle",
+                       provider: str = "claude",
                        model: str = "claude-sonnet-4-6-20260301",
                        turns: int = 5,
                        tool_count: int = 10,
@@ -72,6 +75,7 @@ def write_fake_session(tmpdir: Path, sid: str, *,
     """Write a pair of hook + poller JSON files into tmpdir."""
     hook = {
         "session_id": sid,
+        "provider": provider,
         "cwd": cwd,
         "status": status,
         "last_activity": last_activity or _now_iso(),
@@ -168,6 +172,18 @@ def test_friendly_model_name_unknown():
 
 def test_friendly_model_name_empty():
     assert friendly_model_name("") == ""
+
+
+def test_friendly_model_name_gpt5():
+    assert friendly_model_name("gpt-5.4") == "gpt-5.4"
+
+
+def test_provider_label_claude():
+    assert provider_label("claude") == ("CLD", "#e0af68")
+
+
+def test_provider_label_codex():
+    assert provider_label("codex") == ("CDX", "#5fd7ff")
 
 
 # --- format_start_time tests ---
@@ -277,12 +293,27 @@ async def test_sort_changes(fake_status_dir):
     async with app.run_test() as pilot:
         await pilot.press("s")
         await pilot.pause()
-        # Navigate to "Turns" (index 4) and select
         option_list = app.screen.query_one("#sort-list")
-        option_list.highlighted = 4  # "Turns"
+        turns_index = next(i for i, (key, _label) in enumerate(SORT_OPTIONS) if key == "turns")
+        option_list.highlighted = turns_index
         await pilot.press("enter")
         await pilot.pause()
         assert app.sort_mode == "turns"
+
+
+@pytest.mark.asyncio
+async def test_sort_by_started(fake_status_dir):
+    """Sorting by started should order newer sessions first."""
+    write_fake_session(fake_status_dir, "older-1111", started_at=_ago_iso(120))
+    write_fake_session(fake_status_dir, "newer-2222", started_at=_ago_iso(10))
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.sort_mode = "started"
+        app._repopulate_table()
+        table = app.query_one(DataTable)
+        first_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+        assert str(first_key.value) == "newer-2222"
 
 
 @pytest.mark.asyncio
@@ -448,6 +479,26 @@ async def test_detail_panel_shows_user_and_assistant(fake_status_dir):
         assert "Claude" in rendered
         assert "my user question" in rendered
         assert "my assistant answer" in rendered
+
+
+@pytest.mark.asyncio
+async def test_detail_panel_shows_codex_provider(fake_status_dir):
+    """Codex sessions should show Codex-specific provider metadata and label."""
+    write_fake_session(
+        fake_status_dir, "codex-1111",
+        provider="codex",
+        model="gpt-5.4",
+        last_user_msg="inspect this branch",
+        last_assistant_msg="working on it",
+    )
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        detail = app.query_one("#detail", Static)
+        rendered = _render_static_text(detail)
+        assert "Provider: codex" in rendered
+        assert "Codex" in rendered
+        assert "working on it" in rendered
 
 
 @pytest.mark.asyncio
@@ -625,6 +676,18 @@ def test_health_no_pid_sessions_ignored():
     health = check_session_health(sessions, pids)
     assert health.stale_ids == []
     # live_tracked = 2 - 0 = 2, untracked = max(0, 1 - 2) = 0
+    assert health.untracked_count == 0
+
+
+def test_health_ignores_codex_sessions():
+    """Codex sessions should not affect Claude process health checks."""
+    sessions = [
+        SessionInfo(session_id="claude-a", provider="claude", pid=100),
+        SessionInfo(session_id="codex-a", provider="codex", pid=None),
+    ]
+    health = check_session_health(sessions, {100})
+    assert not health.has_mismatch
+    assert health.stale_ids == []
     assert health.untracked_count == 0
 
 

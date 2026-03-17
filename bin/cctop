@@ -1,9 +1,17 @@
 #!/bin/bash
-# cctop — Claude Code Sessions dashboard
-SCRIPTS_DIR="$(find "${HOME}/.claude/plugins/cache/cctop" -type d -name scripts -maxdepth 4 2>/dev/null | head -1)"
-PLUGIN_DIR="${SCRIPTS_DIR:+$(dirname "$SCRIPTS_DIR")}"
-if [ -z "$PLUGIN_DIR" ]; then
-    echo "cctop: plugin not found. Install with: claude plugin install cctop@cctop --scope user" >&2
-    exit 1
+# cctop — sessions dashboard for Claude Code and Codex
+
+PLUGIN_SCRIPTS_DIR="$(find "${HOME}/.claude/plugins/cache/cctop" -type d -name scripts -maxdepth 4 2>/dev/null | head -1)"
+STANDALONE_SCRIPTS_DIR="${HOME}/.local/share/cctop/scripts"
+
+if [ -n "$PLUGIN_SCRIPTS_DIR" ] && [ -x "$PLUGIN_SCRIPTS_DIR/launch-cctop.sh" ]; then
+    exec "$PLUGIN_SCRIPTS_DIR/launch-cctop.sh" "$@"
 fi
-exec "$PLUGIN_DIR/scripts/launch-cctop.sh"
+
+if [ -x "$STANDALONE_SCRIPTS_DIR/launch-cctop.sh" ]; then
+    exec "$STANDALONE_SCRIPTS_DIR/launch-cctop.sh" "$@"
+fi
+
+echo "cctop: runtime not found." >&2
+echo "Install with ./install.sh --prod or ./install.sh --dev" >&2
+exit 1

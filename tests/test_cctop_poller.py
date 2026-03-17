@@ -17,6 +17,10 @@ _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 
 parse_new_lines = _mod.parse_new_lines
+parse_codex_new_lines = _mod.parse_codex_new_lines
+infer_codex_status = _mod.infer_codex_status
+extract_codex_edited_files = _mod.extract_codex_edited_files
+find_codex_transcript_path = _mod.find_codex_transcript_path
 resolve_git_branch = _mod.resolve_git_branch
 detect_worktree = _mod.detect_worktree
 
@@ -124,6 +128,154 @@ class TestTurnCounting:
         result = parse_new_lines(lines)
         assert result["_delta_turns"] == 3
         assert result["last_user_msg"] == "Third question"
+
+
+class TestCodexParsing:
+    """Verify Codex transcript parsing maps into normalized fields."""
+
+    def test_codex_top_level_records_are_parsed(self):
+        lines = [
+            json.dumps({
+                "id": "0195c0de-abcd-1234-9876-feedfacecafe",
+                "timestamp": "2026-03-16T20:00:00Z",
+                "model_provider": "openai",
+            }),
+            json.dumps({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "<environment_context>\n  <cwd>D:\\repo</cwd>\n</environment_context>"}],
+            }),
+            json.dumps({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "check the bug"}],
+            }),
+            json.dumps({
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "thinking"}],
+            }),
+            json.dumps({
+                "type": "function_call",
+                "name": "shell",
+                "arguments": json.dumps({
+                    "command": ["powershell", "-NoProfile", "-Command", "Set-Content -Path notes.txt -Value 'updated'"],
+                }),
+            }),
+            json.dumps({
+                "type": "function_call_output",
+                "call_id": "call_123",
+                "output": json.dumps({
+                    "output": "boom",
+                    "metadata": {"exit_code": 1, "duration_seconds": 0.2},
+                }),
+            }),
+            json.dumps({
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "done"}],
+            }),
+        ]
+
+        result = parse_codex_new_lines(lines)
+
+        assert result["started_at"] == "2026-03-16T20:00:00Z"
+        assert result["cwd"] == "D:\\repo"
+        assert result["project_name"] == "repo"
+        assert result["last_user_msg"] == "check the bug"
+        assert result["last_assistant_msg"] == "done"
+        assert result["_delta_turns"] == 1
+        assert result["_delta_tool_count"] == 1
+        assert result["_delta_error_count"] == 1
+        assert "notes.txt" in result["_delta_files_edited"]
+        assert result["_status"] == "thinking"
+
+    def test_codex_wrapped_token_events_still_update_usage(self):
+        lines = [
+            json.dumps({
+                "type": "session_meta",
+                "payload": {
+                    "cwd": "D:\\repo",
+                    "timestamp": "2026-03-16T20:00:00Z",
+                    "model_provider": "openai",
+                },
+            }),
+            json.dumps({
+                "type": "turn_context",
+                "payload": {"cwd": "D:\\repo", "model": "gpt-5.4"},
+            }),
+            json.dumps({
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1200,
+                            "cached_input_tokens": 300,
+                            "output_tokens": 90,
+                            "reasoning_output_tokens": 10,
+                        },
+                        "last_token_usage": {
+                            "input_tokens": 400,
+                            "cached_input_tokens": 50,
+                            "output_tokens": 20,
+                            "reasoning_output_tokens": 5,
+                        },
+                        "model_context_window": 258400,
+                    },
+                },
+            }),
+        ]
+
+        result = parse_codex_new_lines(lines)
+
+        assert result["model"] == "gpt-5.4"
+        assert result["input_tokens"] == 450
+        assert result["output_tokens"] == 25
+        assert result["cumulative_input_tokens"] == 1200
+        assert result["cumulative_cache_read_tokens"] == 300
+        assert result["context_window"] == 258400
+
+
+class TestCodexStatusInference:
+    def test_infer_codex_status_read(self):
+        assert infer_codex_status("shell", {"command": ["powershell", "-NoProfile", "-Command", "Get-Content README.md"]}) == "tool:Read"
+
+    def test_infer_codex_status_search(self):
+        assert infer_codex_status("shell", {"command": ["powershell", "-NoProfile", "-Command", "rg -n foo ."]}) == "tool:Glob"
+
+    def test_infer_codex_status_edit(self):
+        assert infer_codex_status("shell", {"command": ["powershell", "-NoProfile", "-Command", "Set-Content -Path file.txt -Value hi"]}) == "tool:Edit"
+
+    def test_infer_codex_status_parallel(self):
+        assert infer_codex_status("multi_tool_use.parallel", {}) == "tool:multi_tool_use.parallel"
+
+    def test_extract_codex_edited_files(self):
+        files = extract_codex_edited_files("shell", {"command": ["powershell", "-NoProfile", "-Command", "Set-Content -Path \"docs\\note.md\" -Value 'x'"]})
+        assert "docs\\note.md" in files
+
+    def test_extract_codex_edited_files_from_apply_patch(self):
+        files = extract_codex_edited_files("apply_patch", {
+            "patch": "*** Begin Patch\n*** Update File: docs/note.md\n@@\n-old\n+new\n*** End Patch"
+        })
+        assert "docs/note.md" in files
+
+
+class TestCodexTranscriptDiscovery:
+    def test_finds_transcript_when_local_folder_day_differs_from_updated_at(self, tmp_path):
+        sessions_dir = tmp_path / "sessions"
+        archived_dir = tmp_path / "archived_sessions"
+        transcript_dir = sessions_dir / "2026" / "03" / "08"
+        transcript_dir.mkdir(parents=True)
+        transcript = transcript_dir / "rollout-2026-03-08T01-39-24-019ccaab-8460-79f1-a059-972ede607c41.jsonl"
+        transcript.write_text("{}\n", encoding="utf-8")
+
+        with patch.object(_mod, "CODEX_SESSIONS_DIR", sessions_dir), patch.object(_mod, "CODEX_ARCHIVED_SESSIONS_DIR", archived_dir):
+            result = find_codex_transcript_path(
+                "019ccaab-8460-79f1-a059-972ede607c41",
+                "2026-03-07T23:40:11Z",
+            )
+
+        assert result == str(transcript)
 
 
 # --- resolve_git_branch tests ---

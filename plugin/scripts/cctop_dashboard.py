@@ -43,6 +43,7 @@ SORT_OPTIONS: list[tuple[str, str]] = [
     ("slug", "Name"),
     ("status", "Status"),
     ("duration", "Duration"),
+    ("started", "Started"),
     ("turns", "Turns"),
     ("tokens", "Tokens"),
     ("tools", "Tool Count"),
@@ -71,6 +72,13 @@ def _render_message(label: str, text: str | None, max_chars: int = 500) -> list[
     ]
 
 
+def provider_label(provider: str) -> tuple[str, str]:
+    """Return short provider badge text and color."""
+    if provider == "codex":
+        return ("CDX", "#5fd7ff")
+    return ("CLD", "#e0af68")
+
+
 STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "idle": ("green", "idle"),
     "thinking": ("yellow", "thinking"),
@@ -85,6 +93,11 @@ STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "tool:Write": ("#ff8700", "editing"),
     "tool:Glob": ("cyan", "searching"),
     "tool:Grep": ("cyan", "searching"),
+    "tool:shell_command": ("green", "running cmd"),
+    "tool:list_mcp_resources": ("magenta", "mcp"),
+    "tool:list_mcp_resource_templates": ("magenta", "mcp"),
+    "tool:read_mcp_resource": ("magenta", "mcp"),
+    "tool:multi_tool_use.parallel": ("cyan", "parallel"),
     "ended": ("dim", "ended"),
 }
 
@@ -192,6 +205,7 @@ class SessionInfo:
     """Aggregated info for one Claude Code session."""
 
     session_id: str = ""
+    provider: str = "claude"
     cwd: str = ""
     status: str = ""
     last_activity: str = ""
@@ -222,6 +236,7 @@ class SessionInfo:
     subagent_output_tokens: int = 0
     subagent_cache_read_tokens: int = 0
     subagent_cache_creation_tokens: int = 0
+    context_window: int = CONTEXT_WINDOW
 
     @property
     def context_tokens(self) -> int:
@@ -274,6 +289,7 @@ def load_sessions() -> list[SessionInfo]:
         raw_pid = hook.get("pid")
         info = SessionInfo(
             session_id=sid,
+            provider=hook.get("provider", "claude"),
             cwd=hook.get("cwd", ""),
             status=hook.get("status", ""),
             last_activity=hook.get("last_activity", ""),
@@ -303,6 +319,7 @@ def load_sessions() -> list[SessionInfo]:
             subagent_output_tokens=poller.get("subagent_output_tokens", 0),
             subagent_cache_read_tokens=poller.get("subagent_cache_read_tokens", 0),
             subagent_cache_creation_tokens=poller.get("subagent_cache_creation_tokens", 0),
+            context_window=poller.get("context_window", CONTEXT_WINDOW),
         )
         sessions.append(info)
 
@@ -446,10 +463,11 @@ def get_claude_pids() -> set[int]:
 
 def check_session_health(sessions: list[SessionInfo], claude_pids: set[int]) -> HealthStatus:
     """Compare tracked sessions against live Claude processes."""
-    tracked_count = len(sessions)
+    claude_sessions = [s for s in sessions if s.provider == "claude"]
+    tracked_count = len(claude_sessions)
     stale_ids: list[str] = []
 
-    for s in sessions:
+    for s in claude_sessions:
         if s.pid is not None and s.pid > 0:
             if s.pid not in claude_pids:
                 stale_ids.append(s.session_id)
@@ -506,9 +524,9 @@ class SortPicker(ModalScreen[str]):
 
 
 class SessionsDashboard(App):
-    """TUI dashboard for monitoring Claude Code sessions."""
+    """TUI dashboard for monitoring Claude Code and Codex sessions."""
 
-    TITLE = "Claude Sessions"
+    TITLE = "cctop Sessions"
 
     CSS = """
     #detail-scroll {
@@ -617,6 +635,8 @@ class SessionsDashboard(App):
             return s.status.lower()
         if self.sort_mode == "duration":
             return s.started_at or ""
+        if self.sort_mode == "started":
+            return s.started_at or ""
         if self.sort_mode == "turns":
             return s.turns
         if self.sort_mode == "tokens":
@@ -643,16 +663,25 @@ class SessionsDashboard(App):
                 pass
         table.clear()
         # Numeric/time sorts: largest first; alphabetical sorts: A-Z
-        reverse = self.sort_mode in ("activity", "duration", "turns", "tokens", "tools", "files", "agents", "errors")
+        reverse = self.sort_mode in ("activity", "duration", "started", "turns", "tokens", "tools", "files", "agents", "errors")
         ordered = sorted(self._sessions, key=self._sort_key, reverse=reverse)
         for s in ordered:
             project = s.project_name or (os.path.basename(s.cwd) if s.cwd else "")
             ctx = s.context_tokens
-            ctx_pct = f"{ctx * 100 // CONTEXT_WINDOW}%" if ctx else ""
+            ctx_pct = f"{ctx * 100 // s.context_window}%" if ctx and s.context_window else ""
             tokens = format_tokens(ctx)
             errors_cell = Text(str(s.error_count), style="red") if s.error_count else ""
+            badge_text, badge_color = provider_label(s.provider)
             table.add_row(
-                Text.assemble(("● ", "#e0af68"), s.custom_title) if s.custom_title else Text.assemble(("○ ", "dim"), s.session_id[:8]),
+                Text.assemble(
+                    (f"[{badge_text}] ", badge_color),
+                    ("● ", "#e0af68"),
+                    (s.custom_title, "none"),
+                ) if s.custom_title else Text.assemble(
+                    (f"[{badge_text}] ", badge_color),
+                    ("○ ", "dim"),
+                    (s.session_id[:8], "none"),
+                ),
                 project,
                 s.git_branch[:20],
                 styled_status(s.status, s.last_activity),
@@ -707,6 +736,7 @@ class SessionsDashboard(App):
 
         # Info metadata
         meta_parts: list[str] = []
+        meta_parts.append(f"Provider: {session.provider}")
         if session.model:
             meta_parts.append(f"Model: {session.model}")
         if session.files_edited:
@@ -725,7 +755,8 @@ class SessionsDashboard(App):
             Text(""),
         ]
         parts.extend(_render_message("User", session.last_user_msg, 300))
-        parts.extend(_render_message("Claude", session.last_assistant_msg, 800))
+        assistant_label = "Codex" if session.provider == "codex" else "Claude"
+        parts.extend(_render_message(assistant_label, session.last_assistant_msg, 800))
 
         if meta_parts:
             parts.append(Text.from_markup(f"[dim]Info:[/dim]   {'  '.join(meta_parts)}"))

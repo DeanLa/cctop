@@ -2,13 +2,17 @@
 
 ![cctop](media/logo-small.png)
 
-Like `htop`, but for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A live terminal dashboard that shows all your sessions at a glance, status, context usage, tokens, and latest messages.
+Like `htop`, but for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and Codex. A live terminal dashboard that shows all your sessions at a glance, status, context usage, tokens, and latest messages.
 
 ![cctop demo](media/cctop-demo.gif)
 
 ## Install
 
-Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [uv](https://docs.astral.sh/uv/), and [jq](https://jqlang.github.io/jq/).
+Requires [uv](https://docs.astral.sh/uv/).
+
+Optional:
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for Claude session tracking via plugin hooks
+- [jq](https://jqlang.github.io/jq/) for the Claude hook
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/DeanLa/cctop/main/install.sh | bash
@@ -26,6 +30,10 @@ If you're past the "one session at a time" stage but not running a fleet of head
 
 cctop gives you one screen to see all of them.
 
+Claude sessions are tracked through the plugin hooks. Codex sessions are discovered directly from local Codex session transcripts under `~/.codex/`, so they appear automatically once the dashboard is running.
+
+If Claude is installed, `install.sh` also installs the Claude plugin automatically. If Claude is not installed, cctop still installs a standalone runtime and can monitor Codex sessions.
+
 ## What You See
 
 ### Keybindings
@@ -35,7 +43,7 @@ cctop gives you one screen to see all of them.
 | `q` | Quit |
 | `r` | Force refresh |
 | `R` | Purge dead sessions (PID check + staleness fallback) |
-| `s` | Open sort picker (activity, name, status, duration, turns, tokens, tools, files, agents, errors) |
+| `s` | Open sort picker (activity, name, status, duration, started, turns, tokens, tools, files, agents, errors) |
 
 ### Columns
 
@@ -58,7 +66,9 @@ cctop gives you one screen to see all of them.
 | **Started** | Session start time (e.g. "14:30") |
 | **Activity** | Time since last event (e.g. "2m ago") |
 
-Highlight any row to see a detail panel with the full working directory, git branch, token breakdown, files edited, subagent and error counts, the last user prompt, and Claude's last response.
+For Codex sessions, live status and token usage are inferred from the Codex transcript stream. File edit counts and subagent metrics are currently Claude-only.
+
+Highlight any row to see a detail panel with the full working directory, git branch, token breakdown, files edited, subagent and error counts, the last user prompt, and the latest assistant response.
 
 ### Session Lifecycle
 
@@ -69,8 +79,9 @@ A health check bar may appear at the bottom of the dashboard when cctop detects 
 ## Troubleshooting
 
 **No sessions appear after install**
-- Make sure `jq` is installed (`jq --version`). The hook requires it and silently does nothing without it.
-- Only sessions started *after* installing cctop are tracked. Existing sessions won't appear until they are restarted.
+- For Claude sessions, make sure `jq` is installed (`jq --version`). The hook requires it and silently does nothing without it.
+- Claude sessions started *before* installing the plugin won't appear until they are restarted.
+- For Codex sessions, make sure `~/.codex/session_index.jsonl` and `~/.codex/sessions/` exist and contain recent sessions.
 - Try running `cctop --reset` to clear stale data and start fresh.
 
 **Orange warning bar at the bottom**
@@ -79,10 +90,11 @@ A health check bar may appear at the bottom of the dashboard when cctop detects 
 
 ## Uninstall
 
-Remove the plugin and CLI entry point:
+Remove the plugin, standalone runtime, and CLI entry point:
 
 ```bash
 rm -rf ~/.claude/plugins/cache/cctop
+rm -rf ~/.local/share/cctop
 rm -f ~/.local/bin/cctop
 rm -rf ~/.cctop
 ```
