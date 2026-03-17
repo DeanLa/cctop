@@ -47,7 +47,7 @@ cctop gives you one screen to see all of them.
 | **Status** | idle, thinking, editing, running cmd, searching web, subagent, stale, ended |
 | **Model** | Model family and version (e.g. "sonnet 4.6", "opus 4.6") |
 | **Ctx%** | Context window usage percentage |
-| **Tokens** | Total tokens consumed (e.g. "145k") |
+| **Tokens** | Cumulative tokens consumed across the session (e.g. "145k") |
 | **Tools** | Tool call count |
 | **Files** | Number of files edited |
 | **Agents** | Running subagents |
