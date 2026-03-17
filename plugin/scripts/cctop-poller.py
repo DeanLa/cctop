@@ -28,7 +28,7 @@ import signal
 import subprocess
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 STATUS_DIR = Path.home() / ".cctop"
@@ -207,6 +207,19 @@ def parse_codex_new_lines(lines: list[str]) -> dict:
         record_type = obj.get("type", "")
         payload = obj.get("payload") or {}
 
+        if not record_type and _looks_like_codex_session_meta(obj):
+            cwd = obj.get("cwd", "")
+            if cwd:
+                updates["cwd"] = cwd
+                updates["project_name"] = Path(cwd).name
+            started_at = obj.get("timestamp", "")
+            if started_at:
+                updates["started_at"] = started_at
+            model_provider = obj.get("model_provider", "")
+            if model_provider:
+                updates["model_provider"] = model_provider
+            continue
+
         if record_type == "session_meta":
             cwd = payload.get("cwd", "")
             if cwd:
@@ -261,42 +274,43 @@ def parse_codex_new_lines(lines: list[str]) -> dict:
                 latest_window = info.get("model_context_window", latest_window)
             continue
 
-        if record_type != "response_item":
+        item = payload if record_type == "response_item" else obj
+        item_type = item.get("type", "")
+
+        if item_type == "reasoning":
+            latest_status = "thinking"
             continue
 
-        item_type = payload.get("type", "")
         if item_type == "function_call":
             tool_count_delta += 1
-            name = payload.get("name", "")
-            arguments_raw = payload.get("arguments", "")
-            arguments = {}
-            if isinstance(arguments_raw, str):
-                try:
-                    arguments = json.loads(arguments_raw)
-                except json.JSONDecodeError:
-                    arguments = {}
+            name = item.get("name", "")
+            arguments = _parse_codex_tool_arguments(item.get("arguments", ""))
             latest_status = infer_codex_status(name, arguments)
             files_edited_delta.update(extract_codex_edited_files(name, arguments))
         elif item_type == "function_call_output":
-            output = payload.get("output", "")
-            if isinstance(output, str) and "Exit code:" in output:
+            output, metadata = _parse_codex_tool_output(item.get("output", ""))
+            exit_code = metadata.get("exit_code")
+            if not isinstance(exit_code, int) and isinstance(output, str) and "Exit code:" in output:
                 try:
                     exit_code = int(output.split("Exit code:", 1)[1].splitlines()[0].strip())
                 except (ValueError, IndexError):
                     exit_code = 0
-                if exit_code != 0:
-                    error_count_delta += 1
+            if isinstance(exit_code, int) and exit_code != 0:
+                error_count_delta += 1
             latest_status = "thinking"
         elif item_type == "message":
-            if payload.get("role") == "assistant":
-                texts: list[str] = []
-                for block in payload.get("content", []):
-                    if isinstance(block, dict) and block.get("type") == "output_text":
-                        text = block.get("text", "")
-                        if text:
-                            texts.append(text)
-                if texts:
-                    updates["last_assistant_msg"] = "\n".join(texts).strip()
+            role = item.get("role")
+            text = _extract_codex_message_text(item.get("content", []))
+            if role == "user" and text and not text.lstrip().startswith("<"):
+                turns_delta += 1
+                updates["last_user_msg"] = text
+            elif role == "assistant" and text:
+                updates["last_assistant_msg"] = text
+
+            cwd = _extract_codex_cwd(text)
+            if cwd:
+                updates["cwd"] = cwd
+                updates["project_name"] = Path(cwd).name
 
     if latest_input:
         updates["input_tokens"] = latest_input
@@ -320,16 +334,89 @@ def parse_codex_new_lines(lines: list[str]) -> dict:
     return updates
 
 
+def _looks_like_codex_session_meta(obj: dict) -> bool:
+    """Detect older Codex transcript headers with top-level session metadata."""
+    return bool(obj.get("id")) and bool(obj.get("timestamp")) and "type" not in obj
+
+
+def _parse_codex_tool_arguments(arguments_raw: str | dict) -> dict:
+    """Decode Codex tool-call arguments from JSON strings when possible."""
+    if isinstance(arguments_raw, dict):
+        return arguments_raw
+    if not isinstance(arguments_raw, str):
+        return {}
+    try:
+        parsed = json.loads(arguments_raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _parse_codex_tool_output(output_raw: str | dict) -> tuple[str, dict]:
+    """Decode structured Codex tool output while preserving raw text fallback."""
+    if isinstance(output_raw, dict):
+        text = output_raw.get("output", "")
+        metadata = output_raw.get("metadata") or {}
+        return str(text), metadata if isinstance(metadata, dict) else {}
+    if not isinstance(output_raw, str):
+        return "", {}
+    try:
+        parsed = json.loads(output_raw)
+    except json.JSONDecodeError:
+        return output_raw, {}
+    if not isinstance(parsed, dict):
+        return output_raw, {}
+    text = parsed.get("output", "")
+    metadata = parsed.get("metadata") or {}
+    return str(text), metadata if isinstance(metadata, dict) else {}
+
+
+def _extract_codex_message_text(content: list[dict] | None) -> str:
+    """Collect visible text blocks from Codex message content."""
+    if not isinstance(content, list):
+        return ""
+    texts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type", "")
+        if block_type in {"input_text", "output_text", "text"}:
+            text = block.get("text", "")
+            if isinstance(text, str) and text:
+                texts.append(text)
+    return "\n".join(texts).strip()
+
+
+def _extract_codex_cwd(text: str) -> str:
+    """Extract cwd from environment_context text blocks when present."""
+    if not isinstance(text, str) or not text:
+        return ""
+    match = re.search(r"<cwd>(.*?)</cwd>", text, re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+
+def _codex_command_text(arguments: dict) -> str:
+    """Flatten Codex shell command arguments into a searchable string."""
+    command = arguments.get("command", "")
+    if isinstance(command, list):
+        return " ".join(str(part) for part in command if part is not None)
+    if isinstance(command, str):
+        return command
+    return ""
+
+
 def infer_codex_status(name: str, arguments: dict) -> str:
     """Map a Codex tool call to a normalized status label."""
     if name == "multi_tool_use.parallel":
         return "tool:multi_tool_use.parallel"
-    if name != "shell_command":
+    if name == "apply_patch":
+        return "tool:Edit"
+    if name not in {"shell", "shell_command"}:
         return f"tool:{name}" if name else "thinking"
 
-    command = str(arguments.get("command", "")).lower()
+    command = _codex_command_text(arguments).lower()
     if not command:
-        return "tool:shell_command"
+        return f"tool:{name}" if name else "thinking"
 
     if any(token in command for token in ("apply_patch", "set-content", "add-content", "out-file", "new-item")):
         return "tool:Edit"
@@ -344,10 +431,13 @@ def infer_codex_status(name: str, arguments: dict) -> str:
 
 def extract_codex_edited_files(name: str, arguments: dict) -> set[str]:
     """Best-effort extraction of edited file paths from Codex tool calls."""
-    if name != "shell_command":
+    if name == "apply_patch":
+        command = str(arguments.get("patch", "") or arguments.get("input", ""))
+    elif name in {"shell", "shell_command"}:
+        command = _codex_command_text(arguments)
+    else:
         return set()
 
-    command = str(arguments.get("command", ""))
     if not command:
         return set()
 
@@ -358,7 +448,6 @@ def extract_codex_edited_files(name: str, arguments: dict) -> set[str]:
         r"Add-Content -Path ([^\s\"']+)",
         r"Add-Content -Path \"([^\"]+)\"",
         r"Out-File ([^\s\"']+)",
-        r"Get-Content ([^\n\r|]+)\s*\|",
         r"\*\*\* Update File: (.+)",
         r"\*\*\* Add File: (.+)",
     ]
@@ -536,16 +625,28 @@ def find_codex_transcript_path(session_id: str, updated_at: str) -> str:
     except (ValueError, TypeError):
         dt = None
 
-    search_roots: list[Path] = []
-    if dt is not None:
-        search_roots.append(CODEX_SESSIONS_DIR / dt.strftime("%Y") / dt.strftime("%m") / dt.strftime("%d"))
-    search_roots.extend([CODEX_SESSIONS_DIR, CODEX_ARCHIVED_SESSIONS_DIR])
-
     pattern = f"*{session_id}.jsonl"
-    for root in search_roots:
+    date_roots: list[Path] = []
+    if dt is not None:
+        seen_roots: set[Path] = set()
+        for day_offset in (0, 1, -1):
+            candidate_dt = dt + timedelta(days=day_offset)
+            root = CODEX_SESSIONS_DIR / candidate_dt.strftime("%Y") / candidate_dt.strftime("%m") / candidate_dt.strftime("%d")
+            if root not in seen_roots:
+                seen_roots.add(root)
+                date_roots.append(root)
+
+    for root in date_roots:
         if not root.exists():
             continue
         matches = sorted(root.glob(pattern))
+        if matches:
+            return str(matches[-1])
+
+    for root in (CODEX_SESSIONS_DIR, CODEX_ARCHIVED_SESSIONS_DIR):
+        if not root.exists():
+            continue
+        matches = sorted(root.rglob(pattern))
         if matches:
             return str(matches[-1])
     return ""
@@ -608,6 +709,14 @@ def read_json_from_transcript(transcript_path: str) -> dict | None:
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if _looks_like_codex_session_meta(obj):
+                    data = {
+                        "started_at": obj.get("timestamp", ""),
+                    }
+                    cwd = obj.get("cwd", "")
+                    if cwd:
+                        data["cwd"] = cwd
+                    return data
                 if obj.get("type") == "session_meta":
                     payload = obj.get("payload") or {}
                     return {
@@ -620,6 +729,11 @@ def read_json_from_transcript(transcript_path: str) -> dict | None:
                         "cwd": payload.get("cwd", ""),
                         "model": payload.get("model", ""),
                     }
+                if obj.get("type") == "message":
+                    text = _extract_codex_message_text(obj.get("content", []))
+                    cwd = _extract_codex_cwd(text)
+                    if cwd:
+                        return {"cwd": cwd}
     except OSError:
         return None
     return None
