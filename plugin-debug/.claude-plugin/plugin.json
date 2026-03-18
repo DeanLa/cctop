@@ -1,0 +1,20 @@
+{
+  "name": "cctop-debug",
+  "version": "0.1.0",
+  "description": "Debug logger for cctop — logs full hook event payloads to per-session JSONL files for troubleshooting and feature ideation.",
+  "author": {
+    "name": "Dean Langsam",
+    "url": "https://github.com/DeanLa",
+    "email": "deanla+cctop@gmail.com"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/DeanLa/cctop",
+  "repository": "https://github.com/DeanLa/cctop.git",
+  "keywords": [
+    "claude code",
+    "debug",
+    "hooks",
+    "logging",
+    "cctop"
+  ]
+}
