@@ -50,6 +50,10 @@ The `reference/` directory contains Claude Code internals documentation, split b
 | `reference/plugin-system.md` | Plugin install/dev workflow, manifests, cache, gotchas |
 | `reference/session-data-files.md` | Tool counts and session-status JSON files |
 
+## Textual TUI Development
+
+When writing or modifying Textual-based code (the dashboard, widgets, tests), always use the `textual-tui-dev` skill first to load best practices for architecture, workers, reactive state, testing patterns, etc.
+
 ## Installing After Changes
 
 The plugin runs from a **copy** in `~/.claude/plugins/cache/`, not from this directory.
