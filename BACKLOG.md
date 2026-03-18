@@ -47,9 +47,8 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [x] **25.** Rename package to `cctop`, plugin name, slash command, and callable as `cctop` from terminal
 - [x] **26.** Create `~/bin/cctop` CLI entry point
 - [x] **27.** Create a git repo and push to GitHub
-- [ ] **28.** Create a demo/promo video with Remotion *(standalone)*
-- [ ] **38.** Support versioning: plugin and CLI app should share the same version, tag releases in git
-- [ ] **39.** Maintain a `CHANGELOG.md` with entries for each release, generated from commit messages or PR descriptions, maintained by Claude automatically
+- [x] **38.** Support versioning: plugin and CLI app should share the same version, tag releases in git
+- [x] **39.** Maintain a `CHANGELOG.md` with entries for each release, generated from commit messages or PR descriptions, maintained by Claude automatically
 
 ## Commands
 - [ ] **29.** `/register` slash command, if the current session is not tracked by cctop (e.g. plugin was installed after the session started, or a bug), manually register it by writing the session JSON into `~/.cctop/` so the poller picks it up. **Approach:** encode the current CWD to derive the project directory (`~/.claude/projects/<encoded>/`), scan it for `.jsonl` transcript files, cross-reference against existing `~/.cctop/*.json` to find untracked sessions, then identify the active one by matching `claude` process CWDs (via `ps` or `lsof`). No CLI command to list sessions exists, and Claude doesn't keep transcript files open as handles, so process CWD matching is the way to link PID → session. `PR-G`
