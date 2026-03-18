@@ -8,13 +8,18 @@ BIN="$BIN_DIR/cctop"
 
 # Parse flags
 MODE="prod"
-case "${1:-}" in
-    --dev)  MODE="dev" ;;
-    --prod) MODE="prod" ;;
-esac
+DEBUG=""
+for arg in "$@"; do
+    case "$arg" in
+        --dev)   MODE="dev" ;;
+        --prod)  MODE="prod" ;;
+        --debug) DEBUG="1" ;;
+    esac
+done
 
 # --- Clean slate: remove previous install ---
 claude plugin marketplace remove cctop 2>/dev/null || true
+claude plugin uninstall cctop-debug@cctop 2>/dev/null || true
 rm -f "$BIN" "$HOME/bin/cctop"  # also clean legacy ~/bin location
 
 # --- Install the Claude Code plugin ---
@@ -24,6 +29,12 @@ else
     claude plugin marketplace add "$REPO_URL"
 fi
 claude plugin install cctop@cctop --scope user
+
+# --- Optionally install the debug plugin ---
+if [ -n "$DEBUG" ]; then
+    claude plugin install cctop-debug@cctop --scope user
+    echo "Installed cctop-debug plugin (full event logging)"
+fi
 
 # --- Install the cctop CLI entry point ---
 mkdir -p "$BIN_DIR"
