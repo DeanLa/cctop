@@ -344,6 +344,13 @@ COLUMN_GROUPS: tuple[tuple[str, str], ...] = (
     ("activity", "Activity"),
     ("time", "Time"),
 )
+_GROUP_NUMBER: dict[str, int] = {key: i for i, (key, _) in enumerate(COLUMN_GROUPS, 1)}
+
+
+def _group_header(col: ColumnDef) -> str:
+    """Prefix a column header with its group number, e.g. '3:Ctx%'."""
+    n = _GROUP_NUMBER.get(col.group, 0)
+    return f"{n}:{col.header}" if n else col.header
 
 
 def _row_cells(s: SessionInfo, columns: tuple[ColumnDef, ...] = COLUMNS) -> tuple:
@@ -687,7 +694,7 @@ class SessionsDashboard(App):
         table = self.query_one(DataTable)
         table.cursor_type = "row"
         vis = self._visible_columns()
-        self._column_keys = table.add_columns(*(c.header for c in vis))
+        self._column_keys = table.add_columns(*(_group_header(c) for c in vis))
 
     def _visible_columns(self) -> tuple[ColumnDef, ...]:
         """Return columns whose group is not hidden."""
@@ -699,7 +706,7 @@ class SessionsDashboard(App):
         saved_key = self._save_cursor(table)
         table.clear(columns=True)
         vis = self._visible_columns()
-        self._column_keys = table.add_columns(*(c.header for c in vis))
+        self._column_keys = table.add_columns(*(_group_header(c) for c in vis))
         ordered = self._sorted_sessions()
         for s in ordered:
             table.add_row(*_row_cells(s, vis), key=s.session_id)
@@ -728,6 +735,7 @@ class SessionsDashboard(App):
     def action_toggle_group(self, group: str) -> None:
         """Toggle visibility of a column group. Identity cannot be hidden."""
         if group == "identity":
+            self.notify("Identity group is always visible", severity="warning")
             return
         if group in self._hidden_groups:
             self._hidden_groups.discard(group)
