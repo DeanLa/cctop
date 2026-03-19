@@ -16,9 +16,14 @@ EVENT=$(echo "$input" | jq -r '.hook_event_name // empty')
 
 DEBUG_LOG="$STATUS_DIR/$SESSION_ID.debug.json"
 
-# SessionEnd: clean up debug log
+# SessionEnd: log the event, then move to archive
 if [ "$EVENT" = "SessionEnd" ]; then
-    rm -f "$DEBUG_LOG"
+    NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    jq -n --arg ts "$NOW" --arg event "$EVENT" --argjson input "$input" \
+        '{ts: $ts, event: $event, input: $input}' >> "$DEBUG_LOG"
+    ARCHIVE_DIR="$STATUS_DIR/debug-archive"
+    mkdir -p "$ARCHIVE_DIR"
+    mv "$DEBUG_LOG" "$ARCHIVE_DIR/"
     exit 0
 fi
 
