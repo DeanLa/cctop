@@ -256,8 +256,14 @@ class SessionInfo:
 
     @property
     def context_tokens(self) -> int:
-        """Current context window usage (input tokens from latest turn)."""
-        return self.input_tokens
+        """Current context window usage (input tokens from latest turn).
+
+        Falls back to cumulative output tokens for Copilot CLI sessions
+        which don't report per-turn input tokens.
+        """
+        if self.input_tokens:
+            return self.input_tokens
+        return self.cumulative_output_tokens
 
     @property
     def context_window(self) -> int:

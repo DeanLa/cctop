@@ -324,6 +324,26 @@ class TestParseCopilotEvents:
         assert result["_delta_tool_count"] == 3
         assert "/b.py" in result["_delta_files_edited"]
 
+    def test_assistant_message_extracts_output_tokens(self):
+        """Copilot CLI embeds outputTokens in assistant.message (no assistant.usage events)."""
+        lines = [
+            _copilot_event("assistant.message", {
+                "content": "First response",
+                "messageId": "msg-1",
+                "outputTokens": 150,
+                "toolRequests": [],
+            }),
+            _copilot_event("assistant.message", {
+                "content": "Second response",
+                "messageId": "msg-2",
+                "outputTokens": 200,
+                "toolRequests": [],
+            }),
+        ]
+        result = parse_copilot_events(lines)
+        assert result.get("output_tokens") == 200  # latest message
+        assert result["_delta_cumulative_output"] == 350  # sum of all
+
     def test_assistant_usage_extracts_tokens(self):
         line = _copilot_event("assistant.usage", {
             "inputTokens": 5000,

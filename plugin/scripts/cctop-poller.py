@@ -264,6 +264,11 @@ def parse_copilot_events(lines: list[str]) -> dict:
             content = data.get("content", "")
             if isinstance(content, str) and content.strip():
                 updates["last_assistant_msg"] = content.strip()
+            # Copilot CLI embeds outputTokens here (no assistant.usage events)
+            msg_out = data.get("outputTokens", 0) or 0
+            if msg_out:
+                latest_output = msg_out
+                cumulative_output_delta += msg_out
             # Count tool requests
             for tr in data.get("toolRequests", []):
                 tool_count_delta += 1
