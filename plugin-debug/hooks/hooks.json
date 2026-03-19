@@ -31,6 +31,16 @@
         ]
       }
     ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/debug-hook.sh"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "hooks": [
@@ -51,17 +61,7 @@
         ]
       }
     ],
-    "PermissionRequest": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/debug-hook.sh"
-          }
-        ]
-      }
-    ],
-    "Stop": [
+    "Notification": [
       {
         "hooks": [
           {
@@ -91,7 +91,17 @@
         ]
       }
     ],
-    "Notification": [
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/debug-hook.sh"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
       {
         "hooks": [
           {
@@ -141,16 +151,6 @@
         ]
       }
     ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/debug-hook.sh"
-          }
-        ]
-      }
-    ],
     "WorktreeCreate": [
       {
         "hooks": [
@@ -162,6 +162,46 @@
       }
     ],
     "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/debug-hook.sh"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/debug-hook.sh"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/debug-hook.sh"
+          }
+        ]
+      }
+    ],
+    "Elicitation": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/debug-hook.sh"
+          }
+        ]
+      }
+    ],
+    "ElicitationResult": [
       {
         "hooks": [
           {
