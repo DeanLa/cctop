@@ -1,6 +1,6 @@
 #!/bin/bash
 # cctop-debug hook — logs full event payloads for troubleshooting.
-# Registered for all 18 hook events. Writes to ~/.cctop/<session-id>.debug.json.
+# Registered for all 18 hook events. Writes to ~/.cctop/<session-id>.debug.jsonl.
 
 command -v jq >/dev/null 2>&1 || exit 0
 
@@ -14,7 +14,7 @@ EVENT=$(echo "$input" | jq -r '.hook_event_name // empty')
 
 [ -z "$SESSION_ID" ] && exit 0
 
-DEBUG_LOG="$STATUS_DIR/$SESSION_ID.debug.json"
+DEBUG_LOG="$STATUS_DIR/$SESSION_ID.debug.jsonl"
 
 # SessionEnd: log the event, then move to archive
 if [ "$EVENT" = "SessionEnd" ]; then
