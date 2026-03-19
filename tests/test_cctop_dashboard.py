@@ -26,6 +26,7 @@ from cctop_dashboard import (
     SessionInfo,
     SortPicker,
     HealthStatus,
+    COLUMN_GROUPS,
     _render_message,
     format_tokens,
     format_relative_time,
@@ -802,6 +803,73 @@ def test_health_status_message_singular():
     ]
     health = check_session_health(sessions, set())
     assert "1 stale session " in health.message
+
+
+# --- Column group toggle tests ---
+
+
+@pytest.mark.asyncio
+async def test_column_group_toggle(fake_status_dir):
+    """Toggling a group should change column count."""
+    write_fake_session(fake_status_dir, "grp-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        table = app.query_one(DataTable)
+        assert len(table.columns) == 16  # all visible by default
+        # Hide context group (2 columns: ctx_pct, tokens)
+        await pilot.press("3")
+        await pilot.pause()
+        assert len(table.columns) == 14
+
+
+@pytest.mark.asyncio
+async def test_identity_group_cannot_be_hidden(fake_status_dir):
+    """Pressing 1 should not hide the identity group."""
+    write_fake_session(fake_status_dir, "id-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        table = app.query_one(DataTable)
+        assert len(table.columns) == 16
+        await pilot.press("1")
+        await pilot.pause()
+        assert len(table.columns) == 16
+
+
+@pytest.mark.asyncio
+async def test_toggle_group_restores_columns(fake_status_dir):
+    """Toggling a group off then on should restore all columns."""
+    write_fake_session(fake_status_dir, "restore-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        table = app.query_one(DataTable)
+        assert len(table.columns) == 16
+        await pilot.press("4")  # hide activity (5 columns)
+        await pilot.pause()
+        assert len(table.columns) == 11
+        await pilot.press("4")  # show activity again
+        await pilot.pause()
+        assert len(table.columns) == 16
+
+
+@pytest.mark.asyncio
+async def test_sort_picker_only_visible_columns(fake_status_dir):
+    """Sort picker should only show sortable columns from visible groups."""
+    write_fake_session(fake_status_dir, "sp-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        # Hide activity group (5 sortable columns: tools, files, agents, errors, turns)
+        await pilot.press("4")
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert isinstance(app.screen, SortPicker)
+        option_list = app.screen.query_one("#sort-list")
+        # 10 total sortable - 5 from activity = 5 remaining
+        assert option_list.option_count == 5
 
 
 # --- Health bar TUI integration tests ---

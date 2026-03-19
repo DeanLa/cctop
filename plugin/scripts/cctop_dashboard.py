@@ -257,6 +257,7 @@ class ColumnDef:
     key: str                          # internal identifier, e.g. "slug"
     cell: Callable[[SessionInfo], object]  # renders a SessionInfo into a cell value
     header: str = ""                  # empty = derive from key
+    group: str = ""                   # column group, e.g. "identity"
     sort_label: str = ""              # non-empty = appears in sort picker
     sort_key: Callable[[SessionInfo], object] | None = None  # extracts comparable value for sorting
     reverse_sort: bool = False        # True = largest/newest first
@@ -268,58 +269,58 @@ class ColumnDef:
 
 
 COLUMNS: tuple[ColumnDef, ...] = (
-    ColumnDef("slug",
+    ColumnDef("slug", group="identity",
               cell=lambda s: (
                   Text.assemble(("● ", "#e0af68"), s.custom_title) if s.custom_title
                   else Text.assemble(("○ ", "dim"), s.session_id[:8])
               ),
               sort_label="Name", sort_position=2,
               sort_key=lambda s: (s.custom_title or s.slug or s.session_id).lower()),
-    ColumnDef("project",
+    ColumnDef("project", group="identity",
               cell=lambda s: s.project_name or (os.path.basename(s.cwd) if s.cwd else "")),
-    ColumnDef("branch",
+    ColumnDef("branch", group="identity",
               cell=lambda s: s.git_branch[:20]),
-    ColumnDef("status",
+    ColumnDef("status", group="status",
               cell=lambda s: styled_status(s.status, s.last_activity),
               sort_label="Status", sort_position=3,
               sort_key=lambda s: s.status.lower()),
-    ColumnDef("model",
+    ColumnDef("model", group="status",
               cell=lambda s: friendly_model_name(s.model)),
-    ColumnDef("ctx_pct", header="Ctx%",
+    ColumnDef("ctx_pct", header="Ctx%", group="context",
               cell=lambda s: f"{s.context_tokens * 100 // CONTEXT_WINDOW}%" if s.context_tokens else ""),
-    ColumnDef("tokens",
+    ColumnDef("tokens", group="context",
               cell=lambda s: format_tokens(s.context_tokens),
               sort_label="Tokens", sort_position=6, reverse_sort=True,
               sort_key=lambda s: s.context_tokens),
-    ColumnDef("tools",
+    ColumnDef("tools", group="activity",
               cell=lambda s: str(s.tool_count) if s.tool_count else "",
               sort_label="Tool Count", sort_position=7, reverse_sort=True,
               sort_key=lambda s: s.tool_count),
-    ColumnDef("files",
+    ColumnDef("files", group="activity",
               cell=lambda s: str(len(s.files_edited)) if s.files_edited else "",
               sort_label="Files Edited", sort_position=8, reverse_sort=True,
               sort_key=lambda s: len(s.files_edited) if s.files_edited else 0),
-    ColumnDef("agents",
+    ColumnDef("agents", group="activity",
               cell=lambda s: str(s.running_agents) if s.running_agents else "",
               sort_label="Running Agents", sort_position=9, reverse_sort=True,
               sort_key=lambda s: s.running_agents),
-    ColumnDef("errors",
+    ColumnDef("errors", group="activity",
               cell=lambda s: Text(str(s.error_count), style="red") if s.error_count else "",
               sort_label="Errors", sort_position=10, reverse_sort=True,
               sort_key=lambda s: s.error_count),
-    ColumnDef("turns",
+    ColumnDef("turns", group="activity",
               cell=lambda s: str(s.turns) if s.turns else "",
               sort_label="Turns", sort_position=5, reverse_sort=True,
               sort_key=lambda s: s.turns),
-    ColumnDef("stop_reason", header="StopRsn",
+    ColumnDef("stop_reason", header="StopRsn", group="status",
               cell=lambda s: format_stop_reason(s.stop_reason)),
-    ColumnDef("duration",
+    ColumnDef("duration", group="time",
               cell=lambda s: format_duration(s.started_at),
               sort_label="Duration", sort_position=4, reverse_sort=True,
               sort_key=lambda s: s.started_at or ""),
-    ColumnDef("started",
+    ColumnDef("started", group="time",
               cell=lambda s: format_start_time(s.started_at)),
-    ColumnDef("activity",
+    ColumnDef("activity", group="time",
               cell=lambda s: format_relative_time(s.last_activity),
               sort_label="Last Activity", sort_position=1, reverse_sort=True,
               sort_key=lambda s: s.last_activity or ""),
@@ -336,10 +337,18 @@ SORT_OPTIONS: list[tuple[str, str]] = [
 _COLUMN_BY_KEY: dict[str, ColumnDef] = {c.key: c for c in COLUMNS}
 _COLUMN_HEADERS: tuple[str, ...] = tuple(c.header for c in COLUMNS)
 
+COLUMN_GROUPS: tuple[tuple[str, str], ...] = (
+    ("identity", "Identity"),
+    ("status", "Status"),
+    ("context", "Context"),
+    ("activity", "Activity"),
+    ("time", "Time"),
+)
 
-def _row_cells(s: SessionInfo) -> tuple:
+
+def _row_cells(s: SessionInfo, columns: tuple[ColumnDef, ...] = COLUMNS) -> tuple:
     """Compute all cell values for one session row."""
-    return tuple(c.cell(s) for c in COLUMNS)
+    return tuple(c.cell(s) for c in columns)
 
 
 def _read_json(path: Path) -> dict:
@@ -587,8 +596,12 @@ class SortPicker(ModalScreen[str]):
         Binding("s", "cancel", "Cancel", show=False),
     ]
 
+    def __init__(self, sort_options: list[tuple[str, str]] | None = None) -> None:
+        super().__init__()
+        self._sort_options = sort_options if sort_options is not None else SORT_OPTIONS
+
     def compose(self) -> ComposeResult:
-        options = [Option(label, id=key) for key, label in SORT_OPTIONS]
+        options = [Option(label, id=key) for key, label in self._sort_options]
         yield OptionList(*options, id="sort-list")
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
@@ -638,6 +651,11 @@ class SessionsDashboard(App):
         Binding("r", "force_refresh", "Refresh"),
         Binding("R", "purge_dead", "Purge dead"),
         Binding("s", "open_sort", "Sort"),
+        Binding("1", "toggle_group('identity')", "1:Id", show=False),
+        Binding("2", "toggle_group('status')", "2:St", show=False),
+        Binding("3", "toggle_group('context')", "3:Cx", show=False),
+        Binding("4", "toggle_group('activity')", "4:Ac", show=False),
+        Binding("5", "toggle_group('time')", "5:Tm", show=False),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
@@ -662,12 +680,31 @@ class SessionsDashboard(App):
         self._last_health_check: float = 0.0
         self._last_health: HealthStatus | None = None
         self._last_row_keys: list[str] = []
+        self._hidden_groups: set[str] = set()
 
     def _setup_table(self) -> None:
         """Configure the DataTable with columns from COLUMNS definitions."""
         table = self.query_one(DataTable)
         table.cursor_type = "row"
-        self._column_keys = table.add_columns(*_COLUMN_HEADERS)
+        vis = self._visible_columns()
+        self._column_keys = table.add_columns(*(c.header for c in vis))
+
+    def _visible_columns(self) -> tuple[ColumnDef, ...]:
+        """Return columns whose group is not hidden."""
+        return tuple(c for c in COLUMNS if c.group not in self._hidden_groups)
+
+    def _rebuild_columns(self) -> None:
+        """Tear down and rebuild the table with the current visible column set."""
+        table = self.query_one(DataTable)
+        saved_key = self._save_cursor(table)
+        table.clear(columns=True)
+        vis = self._visible_columns()
+        self._column_keys = table.add_columns(*(c.header for c in vis))
+        ordered = self._sorted_sessions()
+        for s in ordered:
+            table.add_row(*_row_cells(s, vis), key=s.session_id)
+        self._last_row_keys = [s.session_id for s in ordered]
+        self._restore_cursor(table, saved_key)
 
     # --- Actions ---------------------------------------------------------
 
@@ -681,14 +718,34 @@ class SessionsDashboard(App):
 
     def action_open_sort(self) -> None:
         """Open the sort picker popup."""
+        vis_keys = {c.key for c in self._visible_columns()}
+        filtered = [(k, l) for k, l in SORT_OPTIONS if k in vis_keys]
         def _on_dismiss(result: str) -> None:
             if result:
                 self.sort_mode = result
-        self.push_screen(SortPicker(), callback=_on_dismiss)
+        self.push_screen(SortPicker(filtered), callback=_on_dismiss)
+
+    def action_toggle_group(self, group: str) -> None:
+        """Toggle visibility of a column group. Identity cannot be hidden."""
+        if group == "identity":
+            return
+        if group in self._hidden_groups:
+            self._hidden_groups.discard(group)
+        else:
+            self._hidden_groups.add(group)
+        # Reset sort if the sorted column is now hidden
+        vis_keys = {c.key for c in self._visible_columns()}
+        if self.sort_mode not in vis_keys:
+            self.sort_mode = "activity" if "activity" in vis_keys else next(
+                (k for k, _ in SORT_OPTIONS if k in vis_keys), "slug"
+            )
+        self._rebuild_columns()
+        self._update_subtitle()
 
     def watch_sort_mode(self, new_value: str) -> None:
         """Re-sort the table when sort_mode changes."""
         self._repopulate_table()
+        self._update_subtitle()
 
     # --- Data loading ----------------------------------------------------
 
@@ -724,9 +781,13 @@ class SessionsDashboard(App):
         self._update_health_bar()
 
     def _update_subtitle(self) -> None:
-        """Update the header subtitle with session count and sort mode."""
+        """Update the header subtitle with session count, group indicators, and sort mode."""
         count = len(self._sessions)
-        self.sub_title = f"{_plural(count, 'session')} · sorted by {self.sort_mode}"
+        indicators = []
+        for i, (key, _label) in enumerate(COLUMN_GROUPS, 1):
+            indicators.append(f"[{i}]" if key not in self._hidden_groups else f" {i} ")
+        groups_str = " ".join(indicators)
+        self.sub_title = f"{_plural(count, 'session')} · {groups_str} · sorted by {self.sort_mode}"
 
     def _update_health_bar(self) -> None:
         """Show or hide the health warning bar based on current health status."""
@@ -761,8 +822,9 @@ class SessionsDashboard(App):
     def _patch_table_cells(self, ordered: list[SessionInfo]) -> None:
         """Update cell values in place without rebuilding the table."""
         table = self.query_one(DataTable)
+        vis = self._visible_columns()
         for s in ordered:
-            cells = _row_cells(s)
+            cells = _row_cells(s, vis)
             for col_key, value in zip(self._column_keys, cells):
                 table.update_cell(s.session_id, col_key, value)
 
@@ -771,8 +833,9 @@ class SessionsDashboard(App):
         table = self.query_one(DataTable)
         saved_key = self._save_cursor(table)
         table.clear()
+        vis = self._visible_columns()
         for s in ordered:
-            table.add_row(*_row_cells(s), key=s.session_id)
+            table.add_row(*_row_cells(s, vis), key=s.session_id)
         self._restore_cursor(table, saved_key)
 
     @staticmethod
