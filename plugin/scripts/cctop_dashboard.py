@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time as _time
@@ -209,6 +210,7 @@ class SessionInfo:
     error_count: int = 0
     stop_reason: str = ""
     pid: int | None = None
+    transcript_path: str = ""
     running_agents: int = 0
     cumulative_input_tokens: int = 0
     cumulative_output_tokens: int = 0
@@ -372,6 +374,7 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         last_activity=hook.get("last_activity", ""),
         started_at=hook.get("started_at", ""),
         pid=raw_pid if isinstance(raw_pid, int) else None,
+        transcript_path=hook.get("transcript_path", ""),
         # Hook-only fields
         running_agents=hook.get("running_agents", 0),
         # Poller-only fields
@@ -598,6 +601,50 @@ class SortPicker(ModalScreen[str]):
         self.dismiss("")
 
 
+# --- Confirm Kill Modal ---
+
+
+class ConfirmKillScreen(ModalScreen[bool]):
+    """Modal confirmation for killing a session."""
+
+    CSS = """
+    ConfirmKillScreen {
+        align: center middle;
+    }
+    #kill-dialog {
+        width: 50;
+        height: auto;
+        background: $surface;
+        border: tall $error;
+        padding: 1 2;
+    }
+    """
+
+    BINDINGS = [
+        Binding("y", "confirm", "Yes", show=False),
+        Binding("n", "cancel", "No", show=False),
+        Binding("escape", "cancel", "Cancel", show=False),
+    ]
+
+    def __init__(self, session_name: str) -> None:
+        super().__init__()
+        self._session_name = session_name
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            f"Kill session [bold]{self._session_name}[/bold]?\n\n"
+            "[dim](y) yes  (n/esc) cancel[/dim]",
+            id="kill-dialog",
+        )
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
+
 # --- Textual App ---
 
 
@@ -638,6 +685,7 @@ class SessionsDashboard(App):
         Binding("r", "force_refresh", "Refresh"),
         Binding("R", "purge_dead", "Purge dead"),
         Binding("s", "open_sort", "Sort"),
+        Binding("k", "kill_session", "Kill"),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
@@ -685,6 +733,39 @@ class SessionsDashboard(App):
             if result:
                 self.sort_mode = result
         self.push_screen(SortPicker(), callback=_on_dismiss)
+
+    def action_kill_session(self) -> None:
+        """Kill the highlighted session's process."""
+        table = self.query_one(DataTable)
+        row_key = self._save_cursor(table)
+        session = self._find_session(row_key)
+        if session is None:
+            self.notify("No session selected", severity="warning")
+            return
+        if session.pid is None:
+            self.notify("No PID available for this session", severity="warning")
+            return
+        name = session.custom_title or session.session_id[:8]
+
+        def _on_confirm(confirmed: bool) -> None:
+            if confirmed:
+                self._do_kill(session.pid, name)
+
+        self.push_screen(ConfirmKillScreen(name), callback=_on_confirm)
+
+    @work(thread=True, exclusive=True, group="kill")
+    def _do_kill(self, pid: int, name: str) -> None:
+        """Send SIGINT to the session process in a worker thread."""
+        try:
+            os.kill(pid, signal.SIGTERM)
+            self.call_from_thread(self.notify, f"Sent SIGTERM to {name} (pid {pid})")
+        except ProcessLookupError:
+            self.call_from_thread(self.notify, f"Process {pid} already exited", severity="warning")
+        except PermissionError:
+            self.call_from_thread(self.notify, f"Permission denied killing pid {pid}", severity="error")
+        except OSError as exc:
+            self.call_from_thread(self.notify, f"Kill failed: {exc}", severity="error")
+        self.call_from_thread(self._schedule_refresh)
 
     def watch_sort_mode(self, new_value: str) -> None:
         """Re-sort the table when sort_mode changes."""
