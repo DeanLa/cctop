@@ -28,8 +28,8 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [x] **16.** Debug mode, log all hook events with full JSON stdin to a file for troubleshooting `PR-D` — [#12](https://github.com/DeanLa/cctop/pull/12)
 
 ## Session Actions
-- [ ] **17.** Investigate: can we kill a session from the dashboard? `PR-F`
-- [ ] **18.** Add rename session action from the dashboard, see [`plans/rename-session-externally.md`](plans/rename-session-externally.md) for the approach `PR-F`
+- [x] **17.** Investigate: can we kill a session from the dashboard? `PR-F` — [#14](https://github.com/DeanLa/cctop/pull/14)
+- [ ] **18.** Add rename session action from the dashboard, see [`plans/rename-session-externally.md`](plans/rename-session-externally.md) — blocked: running sessions don't pick up external title changes
 - [x] **19.** Strong refresh: keybinding (e.g. Shift+R) and CLI flag (`cctop --reset`) that wipes `~/.cctop/`, re-scans all sessions from scratch
 
 ## Session Lifecycle
