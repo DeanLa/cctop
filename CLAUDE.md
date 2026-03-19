@@ -35,7 +35,7 @@ Anyone running more than one Claude Code session at a time, or anyone who wants 
 - `.claude-plugin/marketplace.json`, local marketplace manifest (points to `./plugin/`)
 - `tests/test_cctop_dashboard.py`, TUI tests
 - `install.sh`, reinstalls plugin into Claude's cache
-- `plans/`, gitignored, PRDs and design docs (never commit these)
+- `plans/`, **gitignored**, PRDs and design docs (never commit these, never `git add` them)
 - `BACKLOG.md`, numbered feature backlog with completion tracking
 
 ## Reference Docs
@@ -106,7 +106,7 @@ This project uses a structured PR-groups workflow defined in `plans/pr-groups.md
 3. Use `EnterWorktree` to create the worktree, do not skip this step
 4. Enter plan mode before implementing, get user approval before writing code
 5. Make granular commits (one per logical change)
-6. After merge, update both `BACKLOG.md` (mark items done) and `plans/pr-groups.md` (check off the PR group)
+6. After merge, update both `BACKLOG.md` (mark items done, commit+push) and `plans/pr-groups.md` (check off the PR group, local only, do NOT git add)
 
 ## Commits
 
