@@ -8,6 +8,11 @@
       "name": "cctop",
       "source": "./plugin/",
       "description": "Live TUI dashboard showing all active Claude Code sessions with status, latest messages, and key metrics."
+    },
+    {
+      "name": "cctop-debug",
+      "source": "./plugin-debug/",
+      "description": "Debug logger for cctop — logs full hook event payloads to per-session JSONL files."
     }
   ]
 }
