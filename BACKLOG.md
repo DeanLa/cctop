@@ -25,7 +25,7 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **35.** Session metadata section: display relevant metadata from the session-status JSON
 
 ## Debugging
-- [ ] **16.** Debug mode, log all hook events with full JSON stdin to a file for troubleshooting `PR-D`
+- [x] **16.** Debug mode, log all hook events with full JSON stdin to a file for troubleshooting `PR-D` — [#12](https://github.com/DeanLa/cctop/pull/12)
 
 ## Session Actions
 - [ ] **17.** Investigate: can we kill a session from the dashboard? `PR-F`
