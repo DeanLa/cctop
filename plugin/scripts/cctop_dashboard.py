@@ -72,6 +72,7 @@ STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "thinking": ("yellow", "thinking"),
     "started": ("blue", "started"),
     "resumed": ("#5fd7ff", "resumed"),
+    # Claude Code tool names (PascalCase)
     "tool:Bash": ("green", "running cmd"),
     "tool:WebSearch": ("magenta", "searching web"),
     "tool:WebFetch": ("magenta", "searching web"),
@@ -81,24 +82,55 @@ STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "tool:Write": ("#ff8700", "editing"),
     "tool:Glob": ("cyan", "searching"),
     "tool:Grep": ("cyan", "searching"),
+    # Copilot CLI tool names (snake_case/lowercase)
+    "tool:bash": ("green", "running cmd"),
+    "tool:web_search": ("magenta", "searching web"),
+    "tool:web_fetch": ("magenta", "searching web"),
+    "tool:task": ("#af87ff", "subagent"),
+    "tool:view": ("cyan", "reading"),
+    "tool:edit": ("#ff8700", "editing"),
+    "tool:create": ("#ff8700", "editing"),
+    "tool:glob": ("cyan", "searching"),
+    "tool:grep": ("cyan", "searching"),
+    "tool:report_intent": ("yellow", "thinking"),
     "ended": ("dim", "ended"),
 }
 
 def friendly_model_name(model: str) -> str:
     """Human-friendly short name for the table column.
 
+    Handles Claude, GPT, and Gemini model identifiers.
     E.g. "claude-sonnet-4-6-20260301" → "sonnet 4.6",
-         "claude-opus-4-6-v1[1m]" → "opus 4.6",
-         "claude-haiku-4-5-20251001" → "haiku 4.5".
-    Falls back to first 12 chars for unknown models.
+         "claude-opus-4.6-1m" → "opus 4.6-1m",
+         "gpt-5.4" → "GPT-5.4",
+         "gemini-3-pro-preview" → "Gemini 3 Pro".
+    Falls back to first 16 chars for unknown models.
     """
+    if not model:
+        return ""
+    # Claude: "claude-sonnet-4-6-20260301" or "claude-opus-4.6-1m"
     m = re.match(r"claude-(\w+)-(\d+)-(\d+)", model)
     if m:
         family = m.group(1)
         major = m.group(2)
         minor = m.group(3)
         return f"{family} {major}.{minor}"
-    return model[:12] if model else ""
+    # Claude with dots: "claude-opus-4.6-1m"
+    m = re.match(r"claude-(\w+)-([\d.]+(?:-\w+)?)", model)
+    if m:
+        return f"{m.group(1)} {m.group(2)}"
+    # GPT: "gpt-5.4", "gpt-5-mini", "gpt-5.1-codex"
+    m = re.match(r"gpt-([\d.]+)(?:-(.+))?", model)
+    if m and m.group(1)[0] != "4":
+        # Only match GPT-5+ to avoid mangling older model names like "gpt-4o-mini"
+        suffix = f"-{m.group(2)}" if m.group(2) else ""
+        return f"GPT-{m.group(1)}{suffix}"
+    # Gemini: "gemini-3-pro-preview"
+    m = re.match(r"gemini-(\d+)-(\w+)(?:-(.+))?", model)
+    if m:
+        variant = f" ({m.group(3)})" if m.group(3) else ""
+        return f"Gemini {m.group(1)} {m.group(2).title()}{variant}"
+    return model[:16]
 
 
 def format_start_time(iso_str: str) -> str:
@@ -185,7 +217,7 @@ def format_tokens(total: int) -> str:
 
 @dataclass
 class SessionInfo:
-    """Aggregated info for one Claude Code session."""
+    """Aggregated info for one session (Claude Code or Copilot CLI)."""
 
     session_id: str = ""
     cwd: str = ""
@@ -218,11 +250,19 @@ class SessionInfo:
     subagent_output_tokens: int = 0
     subagent_cache_read_tokens: int = 0
     subagent_cache_creation_tokens: int = 0
+    # Multi-client fields
+    client: str = ""  # "claude", "copilot", or "" (legacy, treated as claude)
+    token_limit: int = 0  # per-session context window size (0 = use default)
 
     @property
     def context_tokens(self) -> int:
         """Current context window usage (input tokens from latest turn)."""
         return self.input_tokens
+
+    @property
+    def context_window(self) -> int:
+        """Effective context window size for this session."""
+        return self.token_limit if self.token_limit > 0 else CONTEXT_WINDOW
 
 
 
@@ -245,6 +285,14 @@ def styled_status(raw: str, last_activity: str) -> Text:
         return Text(tool_name, style="cyan")
 
     return Text(raw or "?", style="dim")
+
+
+def _client_label(client: str) -> Text:
+    """Return a styled label for the Client column."""
+    if client == "copilot":
+        return Text("GH", style="#1f6feb")
+    # Default: Claude Code (or legacy sessions without client field)
+    return Text("CC", style="#d97706")
 
 
 # --- Column definitions (single source of truth) ---
@@ -275,6 +323,8 @@ COLUMNS: tuple[ColumnDef, ...] = (
               ),
               sort_label="Name", sort_position=2,
               sort_key=lambda s: (s.custom_title or s.slug or s.session_id).lower()),
+    ColumnDef("client",
+              cell=lambda s: _client_label(s.client)),
     ColumnDef("project",
               cell=lambda s: s.project_name or (os.path.basename(s.cwd) if s.cwd else "")),
     ColumnDef("branch",
@@ -286,7 +336,7 @@ COLUMNS: tuple[ColumnDef, ...] = (
     ColumnDef("model",
               cell=lambda s: friendly_model_name(s.model)),
     ColumnDef("ctx_pct", header="Ctx%",
-              cell=lambda s: f"{s.context_tokens * 100 // CONTEXT_WINDOW}%" if s.context_tokens else ""),
+              cell=lambda s: f"{s.context_tokens * 100 // s.context_window}%" if s.context_tokens else ""),
     ColumnDef("tokens",
               cell=lambda s: format_tokens(s.context_tokens),
               sort_label="Tokens", sort_position=6, reverse_sort=True,
@@ -399,6 +449,9 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         # Poller preferred, hook fallback
         tool_count=poller.get("tool_count", 0) or hook.get("tool_count", 0),
         model=poller.get("model", "") or hook.get("model", ""),
+        # Multi-client fields
+        client=hook.get("client", ""),
+        token_limit=poller.get("token_limit", 0),
     )
 
 
@@ -457,7 +510,7 @@ def purge_dead_sessions() -> int:
 
 # --- Health check ---
 
-# Patterns to exclude from ps output when identifying real Claude sessions
+# Patterns to exclude from ps output when identifying real sessions
 _PS_EXCLUDE_PATTERNS = (
     "/Applications/Claude.app/",
     "--parent-session-id",
@@ -466,6 +519,17 @@ _PS_EXCLUDE_PATTERNS = (
     "caffeinate",
     "grep",
 )
+
+# Executable basenames to look for in process listings
+_SESSION_EXECUTABLES = {"claude", "copilot"}
+
+
+@dataclass
+class ProcessScan:
+    """Result of scanning for session processes."""
+
+    all_pids: set[int] = field(default_factory=set)
+    session_count: int = 0
 
 
 @dataclass
@@ -495,68 +559,118 @@ class HealthStatus:
         return "\n".join(parts)
 
 
-def _run_ps() -> str | None:
-    """Run ``ps -eo pid,command`` and return stdout, or None on failure."""
+def _get_pids_unix() -> ProcessScan:
+    """Get PIDs of claude/copilot sessions on Unix via ps.
+
+    Returns a ProcessScan with all matching PIDs and a deduplicated
+    session count.  Copilot CLI spawns a chain of child processes per
+    session (node → copilot → copilot), so we count only "root" PIDs
+    whose parent is not also a matching session process.
+    """
     try:
         result = subprocess.run(
-            ["ps", "-eo", "pid,command"],
+            ["ps", "-eo", "pid,ppid,command"],
             capture_output=True, text=True, timeout=5,
         )
-        return result.stdout
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        return ProcessScan()
 
-
-def _parse_ps_line(line: str) -> tuple[int, str] | None:
-    """Parse a ps output line into (pid, command), or None if unparseable."""
-    parts = line.strip().split(None, 1)
-    if len(parts) < 2:
-        return None
-    try:
-        return int(parts[0]), parts[1]
-    except ValueError:
-        return None
-
-
-def _is_claude_cli_process(cmd: str) -> bool:
-    """True if the command is a real Claude CLI session (not desktop app, MCP, etc.)."""
-    if "claude" not in cmd.lower():
-        return False
-    if any(pat in cmd for pat in _PS_EXCLUDE_PATTERNS):
-        return False
-    basename = os.path.basename(cmd.split()[0]) if cmd.split() else ""
-    return basename == "claude"
-
-
-def get_claude_pids() -> set[int]:
-    """Return PIDs of real Claude CLI sessions from ``ps``."""
-    output = _run_ps()
-    if output is None:
-        return set()
     pids: set[int] = set()
-    for line in output.splitlines():
-        parsed = _parse_ps_line(line)
-        if parsed and _is_claude_cli_process(parsed[1]):
-            pids.add(parsed[0])
-    return pids
+    ppids: dict[int, int] = {}
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        pid_str, ppid_str, cmd = parts
+        cmd_lower = cmd.lower()
+        if not any(exe in cmd_lower for exe in _SESSION_EXECUTABLES):
+            continue
+        if any(pat in cmd for pat in _PS_EXCLUDE_PATTERNS):
+            continue
+        cmd_parts = cmd.split()
+        basename = os.path.basename(cmd_parts[0]) if cmd_parts else ""
+        if basename not in _SESSION_EXECUTABLES:
+            continue
+        try:
+            pid = int(pid_str)
+            ppid = int(ppid_str)
+        except ValueError:
+            continue
+        pids.add(pid)
+        ppids[pid] = ppid
+
+    # Count unique session trees: a "root" is a PID whose parent is not
+    # also in the matched set.
+    roots = sum(1 for p in pids if ppids.get(p) not in pids)
+    return ProcessScan(all_pids=pids, session_count=roots)
 
 
-def _find_stale_session_ids(sessions: list[SessionInfo], live_pids: set[int]) -> list[str]:
-    """Return session IDs whose PID is known but no longer running."""
-    return [
-        s.session_id for s in sessions
-        if s.pid is not None and s.pid > 0 and s.pid not in live_pids
-    ]
+def _get_pids_windows() -> ProcessScan:
+    """Get PIDs of claude/copilot sessions on Windows via tasklist."""
+    pids: set[int] = set()
+    for exe in ("claude.exe", "copilot.exe"):
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {exe}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.splitlines():
+                line = line.strip().strip('"')
+                if not line:
+                    continue
+                parts = line.split('","')
+                if len(parts) >= 2:
+                    try:
+                        pids.add(int(parts[1].strip('"')))
+                    except ValueError:
+                        continue
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    # No PPID dedup on Windows yet; tasklist doesn't provide parent info
+    return ProcessScan(all_pids=pids, session_count=len(pids))
 
 
-def check_session_health(sessions: list[SessionInfo], claude_pids: set[int]) -> HealthStatus:
-    """Compare tracked sessions against live Claude processes."""
-    stale_ids = _find_stale_session_ids(sessions, claude_pids)
+def scan_session_processes() -> ProcessScan:
+    """Scan for real Claude/Copilot CLI session processes.
+
+    Cross-platform: uses ps on Unix, tasklist on Windows.
+    Returns a ProcessScan with all matching PIDs and deduplicated session count.
+    """
+    if sys.platform == "win32":
+        return _get_pids_windows()
+    return _get_pids_unix()
+
+
+def get_session_pids() -> set[int]:
+    """Return PIDs of real Claude/Copilot CLI sessions.
+
+    Cross-platform: uses ps on Unix, tasklist on Windows.
+    """
+    return scan_session_processes().all_pids
+
+
+# Keep old name as alias for backward compatibility (tests import it)
+get_claude_pids = get_session_pids
+
+
+def check_session_health(sessions: list[SessionInfo], scan: ProcessScan) -> HealthStatus:
+    """Compare tracked sessions against live processes."""
+    stale_ids: list[str] = []
+
+    for s in sessions:
+        if s.pid is not None and s.pid > 0:
+            if s.pid not in scan.all_pids:
+                stale_ids.append(s.session_id)
+
     live_tracked = len(sessions) - len(stale_ids)
-    untracked_count = max(0, len(claude_pids) - live_tracked)
+    untracked_count = max(0, scan.session_count - live_tracked)
+
     return HealthStatus(
         tracked_count=len(sessions),
-        process_count=len(claude_pids),
+        process_count=scan.session_count,
         stale_ids=stale_ids,
         untracked_count=untracked_count,
     )
@@ -602,9 +716,9 @@ class SortPicker(ModalScreen[str]):
 
 
 class SessionsDashboard(App):
-    """TUI dashboard for monitoring Claude Code sessions."""
+    """TUI dashboard for monitoring Claude Code and Copilot CLI sessions."""
 
-    TITLE = "Claude Sessions"
+    TITLE = "cctop"
 
     CSS = """
     #detail-scroll {
@@ -710,8 +824,8 @@ class SessionsDashboard(App):
         sessions = load_sessions()
         health: HealthStatus | None = None
         if check_health:
-            pids = get_claude_pids()
-            health = check_session_health(sessions, pids)
+            scan = scan_session_processes()
+            health = check_session_health(sessions, scan)
         self.call_from_thread(self._apply_refresh, sessions, health)
 
     def _apply_refresh(self, sessions: list[SessionInfo], health: HealthStatus | None) -> None:
@@ -777,7 +891,6 @@ class SessionsDashboard(App):
 
     @staticmethod
     def _save_cursor(table: DataTable):
-        """Return the row key of the currently highlighted row, or None."""
         if table.row_count == 0:
             return None
         try:
@@ -846,7 +959,8 @@ class SessionsDashboard(App):
             Text(""),
         ]
         parts.extend(_render_message("User", session.last_user_msg, 300))
-        parts.extend(_render_message("Claude", session.last_assistant_msg, 800))
+        agent_label = "Copilot" if session.client == "copilot" else "Claude"
+        parts.extend(_render_message(agent_label, session.last_assistant_msg, 800))
         meta = self._detail_meta(session)
         if meta:
             parts.append(Text.from_markup(f"[dim]Info:[/dim]   {'  '.join(meta)}"))

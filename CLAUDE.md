@@ -1,14 +1,14 @@
-# cctop, Claude Code Sessions Dashboard
+# cctop, AI Code Sessions Dashboard
 
-A live terminal dashboard for monitoring all your Claude Code sessions at a glance. Like `htop`, but for Claude Code.
+A live terminal dashboard for monitoring all your Claude Code and Copilot CLI sessions at a glance. Like `htop`, but for AI coding agents.
 
 ## Why
 
-Power users run multiple Claude Code sessions simultaneously, one refactoring a module, another writing tests, a third researching an API. You end up tab-switching between terminals just to check "is it done yet?" or "is it stuck waiting for me?" There's no central place to see what's happening across sessions.
+Power users run multiple AI coding sessions simultaneously, one refactoring a module, another writing tests, a third researching an API. You end up tab-switching between terminals just to check "is it done yet?" or "is it stuck waiting for me?" There's no central place to see what's happening across sessions.
 
 ## What It Does
 
-Installs a lightweight hook into Claude Code that tracks session activity in real time. A companion TUI dashboard (`cctop`) displays all active sessions in a single live-updating table:
+For Claude Code, installs a lightweight hook that tracks session activity in real time. For Copilot CLI, the background poller automatically discovers sessions by scanning `~/.copilot/session-state/`. A companion TUI dashboard (`cctop`) displays all active sessions in a single live-updating table:
 
 - **Status**, see at a glance whether each session is idle (waiting for you), thinking, editing files, running commands, searching the web, or spawning subagents
 - **Project & branch**, know which codebase and branch each session is working in
@@ -21,20 +21,24 @@ Sessions that go quiet for 1+ hour are marked stale. Sessions that end clean up 
 
 ## Who It's For
 
-Anyone running more than one Claude Code session at a time, or anyone who wants a quick overview of what's happening without context-switching into each terminal.
+Anyone running more than one Claude Code or Copilot CLI session at a time, or anyone who wants a quick overview of what's happening without context-switching into each terminal.
 
 ## Project Structure
 
 - `plugin/`, distribution files (only this directory gets installed)
-  - `plugin/scripts/cctop-hook.sh`, hook handler, writes `~/.cctop/<session-id>.json`
+  - `plugin/scripts/cctop-hook.sh`, Claude Code hook handler (bash), writes `~/.cctop/<session-id>.json`
+  - `plugin/scripts/cctop-hook.ps1`, Claude Code hook handler (PowerShell, Windows)
   - `plugin/scripts/cctop_dashboard.py`, Textual TUI app (run with `uv run --script`)
   - `plugin/scripts/cctop-poller.py`, background transcript poller
-  - `plugin/scripts/launch-cctop.sh`, convenience launcher
+  - `plugin/scripts/launch-cctop.sh`, convenience launcher (bash)
+  - `plugin/scripts/launch-cctop.ps1`, convenience launcher (PowerShell, Windows)
   - `plugin/hooks/hooks.json`, registers the hook for 7 events
   - `plugin/.claude-plugin/plugin.json`, plugin manifest
 - `.claude-plugin/marketplace.json`, local marketplace manifest (points to `./plugin/`)
 - `tests/test_cctop_dashboard.py`, TUI tests
-- `install.sh`, reinstalls plugin into Claude's cache
+- `tests/test_cctop_poller.py`, poller tests (Claude Code + Copilot CLI parsing)
+- `install.sh`, reinstalls plugin into Claude's cache (bash, macOS/Linux)
+- `install.ps1`, installer for Windows (PowerShell)
 - `plans/`, gitignored, PRDs and design docs (never commit these)
 - `BACKLOG.md`, numbered feature backlog with completion tracking
 
