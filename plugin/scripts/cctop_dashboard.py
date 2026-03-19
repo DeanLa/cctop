@@ -338,7 +338,6 @@ _COLUMN_BY_KEY: dict[str, ColumnDef] = {c.key: c for c in COLUMNS}
 _COLUMN_HEADERS: tuple[str, ...] = tuple(c.header for c in COLUMNS)
 
 COLUMN_GROUPS: tuple[tuple[str, str], ...] = (
-    ("identity", "Identity"),
     ("status", "Status"),
     ("context", "Context"),
     ("activity", "Activity"),
@@ -658,11 +657,10 @@ class SessionsDashboard(App):
         Binding("r", "force_refresh", "Refresh"),
         Binding("R", "purge_dead", "Purge dead"),
         Binding("s", "open_sort", "Sort"),
-        Binding("1", "toggle_group('identity')", "1:Id", show=False),
-        Binding("2", "toggle_group('status')", "2:St", show=False),
-        Binding("3", "toggle_group('context')", "3:Cx", show=False),
-        Binding("4", "toggle_group('activity')", "4:Ac", show=False),
-        Binding("5", "toggle_group('time')", "5:Tm", show=False),
+        Binding("1", "toggle_group('status')", "1:St", show=False),
+        Binding("2", "toggle_group('context')", "2:Cx", show=False),
+        Binding("3", "toggle_group('activity')", "3:Ac", show=False),
+        Binding("4", "toggle_group('time')", "4:Tm", show=False),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
@@ -733,10 +731,7 @@ class SessionsDashboard(App):
         self.push_screen(SortPicker(filtered), callback=_on_dismiss)
 
     def action_toggle_group(self, group: str) -> None:
-        """Toggle visibility of a column group. Identity cannot be hidden."""
-        if group == "identity":
-            self.notify("Identity group is always visible", severity="warning")
-            return
+        """Toggle visibility of a column group."""
         if group in self._hidden_groups:
             self._hidden_groups.discard(group)
         else:

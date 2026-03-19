@@ -818,23 +818,25 @@ async def test_column_group_toggle(fake_status_dir):
         table = app.query_one(DataTable)
         assert len(table.columns) == 16  # all visible by default
         # Hide context group (2 columns: ctx_pct, tokens)
-        await pilot.press("3")
+        await pilot.press("2")
         await pilot.pause()
         assert len(table.columns) == 14
 
 
 @pytest.mark.asyncio
-async def test_identity_group_cannot_be_hidden(fake_status_dir):
-    """Pressing 1 should not hide the identity group."""
+async def test_identity_always_visible(fake_status_dir):
+    """Identity columns remain visible even when all toggleable groups are hidden."""
     write_fake_session(fake_status_dir, "id-1111")
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
         table = app.query_one(DataTable)
-        assert len(table.columns) == 16
-        await pilot.press("1")
-        await pilot.pause()
-        assert len(table.columns) == 16
+        # Hide all 4 toggleable groups
+        for key in ("1", "2", "3", "4"):
+            await pilot.press(key)
+            await pilot.pause()
+        # Only identity columns remain (slug, project, branch)
+        assert len(table.columns) == 3
 
 
 @pytest.mark.asyncio
@@ -846,10 +848,10 @@ async def test_toggle_group_restores_columns(fake_status_dir):
         await _wait_for_rows(pilot, app)
         table = app.query_one(DataTable)
         assert len(table.columns) == 16
-        await pilot.press("4")  # hide activity (5 columns)
+        await pilot.press("3")  # hide activity (5 columns)
         await pilot.pause()
         assert len(table.columns) == 11
-        await pilot.press("4")  # show activity again
+        await pilot.press("3")  # show activity again
         await pilot.pause()
         assert len(table.columns) == 16
 
@@ -862,7 +864,7 @@ async def test_sort_picker_only_visible_columns(fake_status_dir):
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
         # Hide activity group (5 sortable columns: tools, files, agents, errors, turns)
-        await pilot.press("4")
+        await pilot.press("3")
         await pilot.pause()
         await pilot.press("s")
         await pilot.pause()
