@@ -2,21 +2,44 @@
 
 ![cctop](media/logo-small.png)
 
-Like `htop`, but for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A live terminal dashboard that shows all your sessions at a glance, status, context usage, tokens, and latest messages.
+Like `htop`, but for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [Copilot CLI](https://githubnext.com/projects/copilot-cli). A live terminal dashboard that shows all your sessions at a glance, status, context usage, tokens, and latest messages.
+
+> **Fork notice:** This is a fork of [DeanLa/cctop](https://github.com/DeanLa/cctop) with added Copilot CLI support and Windows compatibility. This fork may not include the latest changes from the upstream repo.
 
 ![cctop demo](media/cctop-demo.gif)
 
 ## Install
 
-Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [uv](https://docs.astral.sh/uv/), and [jq](https://jqlang.github.io/jq/).
+Requires [uv](https://docs.astral.sh/uv/) on all platforms. The Claude Code hook also requires [jq](https://jqlang.github.io/jq/) on Linux/macOS.
+
+### Linux / macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DeanLa/cctop/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/joninafta/cctop-copilot-cli/main/install.sh | bash
 ```
 
-Then launch from any terminal:
+### Windows (PowerShell)
 
-```bash
+```powershell
+irm https://raw.githubusercontent.com/joninafta/cctop-copilot-cli/main/install.ps1 | iex
+```
+
+Or clone the repo and run the installer locally:
+
+```powershell
+git clone https://github.com/joninafta/cctop-copilot-cli.git
+cd cctop-copilot-cli
+.\install.ps1
+```
+
+> **Note:** If you get a script execution error, run with:
+> `powershell -ExecutionPolicy Bypass -File .\install.ps1`
+
+### Launch
+
+After installing, open a new terminal and run:
+
+```
 cctop
 ```
 
