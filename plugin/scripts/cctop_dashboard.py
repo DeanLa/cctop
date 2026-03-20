@@ -691,6 +691,35 @@ class SessionsDashboard(App):
                 self.sort_mode = result
         self.push_screen(SortPicker(), callback=_on_dismiss)
 
+    def _find_tmux_target_by_pid(self, pid: int) -> str | None:
+        """Find tmux target (session:window) by process PID.
+
+        Uses 'tmux list-panes -a' to find which session:window contains this PID.
+        Returns None if not found or tmux command fails.
+        """
+        try:
+            result = subprocess.run(
+                ["tmux", "list-panes", "-a", "-F", "#{pane_pid} #{session_name}:#{window_index}"],
+                capture_output=True,
+                text=True,
+                timeout=1,
+            )
+            if result.returncode != 0:
+                return None
+
+            for line in result.stdout.splitlines():
+                parts = line.split(None, 1)
+                if len(parts) == 2:
+                    try:
+                        pane_pid = int(parts[0])
+                        if pane_pid == pid:
+                            return parts[1]
+                    except ValueError:
+                        continue
+            return None
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
     def action_tmux_attach(self) -> None:
         """Attach to the tmux session & window where this Claude Code session is running."""
         table = self.query_one(DataTable)
@@ -709,31 +738,47 @@ class SessionsDashboard(App):
             self.notify("No session selected", severity="warning")
             return
 
-        if not session.tmux_session:
+        if not session.tmux_session and not session.pid:
             self.notify("Session not running in tmux", severity="warning")
             return
 
-        # Build target: "session:window" if window available, else just "session"
-        target = session.tmux_session
-        if session.tmux_window:
-            target = f"{session.tmux_session}:{session.tmux_window}"
+        # Build cached target: "session:window" if window available, else just "session"
+        target = None
+        if session.tmux_session:
+            target = session.tmux_session
+            if session.tmux_window:
+                target = f"{session.tmux_session}:{session.tmux_window}"
 
-        # Switch to the tmux target
-        try:
-            subprocess.run(
-                ["tmux", "switch-client", "-t", target],
-                timeout=2,
-                check=True,
-                capture_output=True,
-            )
-        except subprocess.CalledProcessError as e:
-            stderr = e.stderr.decode() if e.stderr else ""
-            if "session not found" in stderr.lower() or "can't find session" in stderr.lower():
-                self.notify(f"Tmux target '{target}' not found", severity="warning")
-            else:
-                self.notify(f"Failed to switch to '{target}'", severity="error")
-        except (OSError, subprocess.TimeoutExpired) as e:
-            self.notify(f"Failed to switch tmux: {e}", severity="error")
+        # Try cached target first (fast path)
+        if target:
+            try:
+                subprocess.run(
+                    ["tmux", "switch-client", "-t", target],
+                    timeout=2,
+                    check=True,
+                    capture_output=True,
+                )
+                return  # Success!
+            except subprocess.CalledProcessError:
+                pass  # Fall through to PID-based lookup
+
+        # Fallback: PID-based lookup (handles renamed sessions/moved windows)
+        if session.pid:
+            target = self._find_tmux_target_by_pid(session.pid)
+            if target:
+                try:
+                    subprocess.run(
+                        ["tmux", "switch-client", "-t", target],
+                        timeout=2,
+                        check=True,
+                        capture_output=True,
+                    )
+                    return  # Success!
+                except subprocess.CalledProcessError:
+                    pass  # Continue to error handling
+
+        # Both methods failed
+        self.notify("Tmux target not found (session may have ended)", severity="warning")
 
     def watch_sort_mode(self, new_value: str) -> None:
         """Re-sort the table when sort_mode changes."""
