@@ -24,6 +24,14 @@ eval "$(echo "$input" | jq -r '
   @sh "SOURCE=\(.source // "")"
 ' 2>/dev/null)"
 
+# Detect tmux session and window on SessionStart
+TMUX_SESSION=""
+TMUX_WINDOW=""
+if [ "$EVENT" = "SessionStart" ] && [ -n "$TMUX" ]; then
+    TMUX_SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo "")
+    TMUX_WINDOW=$(tmux display-message -p '#I' 2>/dev/null || echo "")
+fi
+
 [ -z "$SESSION_ID" ] && exit 0
 
 STATUS_FILE="$STATUS_DIR/$SESSION_ID.json"
@@ -83,6 +91,8 @@ echo "$EXISTING" | jq \
     --arg now "$NOW" \
     --arg tp "$TRANSCRIPT_PATH" \
     --arg model "$MODEL" \
+    --arg tmux_session "$TMUX_SESSION" \
+    --arg tmux_window "$TMUX_WINDOW" \
     --argjson ppid "${PPID:-0}" \
     --argjson agent_delta "$AGENT_DELTA" \
     --argjson agent_reset "$AGENT_RESET" \
@@ -98,5 +108,7 @@ echo "$EXISTING" | jq \
         transcript_path: (if $tp != "" then $tp else (.transcript_path // "") end),
         model: (if $model != "" then $model else (.model // "") end),
         tool_count: (if $event == "PostToolUse" then ((.tool_count // 0) + 1) else (.tool_count // 0) end),
-        running_agents: (if $agent_reset then 0 else [(.running_agents // 0) + $agent_delta, 0] | max end)
+        running_agents: (if $agent_reset then 0 else [(.running_agents // 0) + $agent_delta, 0] | max end),
+        tmux_session: (if $tmux_session != "" then $tmux_session else (.tmux_session // "") end),
+        tmux_window: (if $tmux_window != "" then $tmux_window else (.tmux_window // "") end)
     }' > "$TMPFILE" && mv "$TMPFILE" "$STATUS_FILE"

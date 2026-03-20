@@ -218,6 +218,8 @@ class SessionInfo:
     subagent_output_tokens: int = 0
     subagent_cache_read_tokens: int = 0
     subagent_cache_creation_tokens: int = 0
+    tmux_session: str = ""
+    tmux_window: str = ""
 
     @property
     def context_tokens(self) -> int:
@@ -374,6 +376,8 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         pid=raw_pid if isinstance(raw_pid, int) else None,
         # Hook-only fields
         running_agents=hook.get("running_agents", 0),
+        tmux_session=hook.get("tmux_session", ""),
+        tmux_window=hook.get("tmux_window", ""),
         # Poller-only fields
         slug=poller.get("slug", ""),
         git_branch=poller.get("git_branch", ""),
@@ -638,6 +642,7 @@ class SessionsDashboard(App):
         Binding("r", "force_refresh", "Refresh"),
         Binding("R", "purge_dead", "Purge dead"),
         Binding("s", "open_sort", "Sort"),
+        Binding("a", "tmux_attach", "Attach"),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
@@ -685,6 +690,50 @@ class SessionsDashboard(App):
             if result:
                 self.sort_mode = result
         self.push_screen(SortPicker(), callback=_on_dismiss)
+
+    def action_tmux_attach(self) -> None:
+        """Attach to the tmux session & window where this Claude Code session is running."""
+        table = self.query_one(DataTable)
+        if table.row_count == 0:
+            self.notify("No sessions available", severity="warning")
+            return
+
+        try:
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+        except Exception:
+            self.notify("No session selected", severity="warning")
+            return
+
+        session = self._find_session(row_key)
+        if session is None:
+            self.notify("No session selected", severity="warning")
+            return
+
+        if not session.tmux_session:
+            self.notify("Session not running in tmux", severity="warning")
+            return
+
+        # Build target: "session:window" if window available, else just "session"
+        target = session.tmux_session
+        if session.tmux_window:
+            target = f"{session.tmux_session}:{session.tmux_window}"
+
+        # Switch to the tmux target
+        try:
+            subprocess.run(
+                ["tmux", "switch-client", "-t", target],
+                timeout=2,
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr.decode() if e.stderr else ""
+            if "session not found" in stderr.lower() or "can't find session" in stderr.lower():
+                self.notify(f"Tmux target '{target}' not found", severity="warning")
+            else:
+                self.notify(f"Failed to switch to '{target}'", severity="error")
+        except (OSError, subprocess.TimeoutExpired) as e:
+            self.notify(f"Failed to switch tmux: {e}", severity="error")
 
     def watch_sort_mode(self, new_value: str) -> None:
         """Re-sort the table when sort_mode changes."""
