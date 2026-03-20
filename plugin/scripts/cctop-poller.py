@@ -7,6 +7,9 @@
 Runs as a background loop (~1s interval). For each active session, seeks to the
 last-read byte offset in the JSONL transcript and parses only new lines.
 
+Supports both Claude Code transcripts (from hook-created session files) and
+Copilot CLI sessions (discovered by scanning ~/.copilot/session-state/).
+
 Writes poller-owned fields to <id>.poller.json (separate from the hook's
 <id>.json). The dashboard merges both files. This eliminates write races.
 
@@ -21,15 +24,19 @@ Poller-owned fields: slug, custom_title, git_branch, project_name, model, last_u
 
 from __future__ import annotations
 
+import glob as _glob_mod
 import json
 import os
+import platform
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
 
 STATUS_DIR = Path.home() / ".cctop"
+COPILOT_SESSION_DIR = Path.home() / ".copilot" / "session-state"
 POLL_INTERVAL = 1.0
 
 _shutdown = False
@@ -176,7 +183,245 @@ def parse_new_lines(lines: list[str]) -> dict:
     return updates
 
 
-# --- File I/O ---
+# --- Copilot CLI events.jsonl parsing ---
+
+
+# Map Copilot CLI tool names to the same status strings the dashboard understands.
+# Copilot uses lowercase tool names; the dashboard STATUS_STYLE_MAP handles both.
+_COPILOT_EDIT_TOOLS = frozenset({"edit", "create", "Edit", "Write"})
+
+
+def parse_copilot_events(lines: list[str]) -> dict:
+    """Parse Copilot CLI events.jsonl lines and extract poller-owned fields.
+
+    The Copilot events.jsonl format uses typed events (session.start,
+    user.message, assistant.usage, tool.execution_start, etc.) instead of
+    Claude Code's flat type:user/assistant/custom-title format.
+
+    Returns the same shape as parse_new_lines() for compatibility with
+    _accumulate_deltas() and the dashboard.
+    """
+    updates: dict = {}
+    latest_input = 0
+    latest_output = 0
+
+    turns_delta = 0
+    tool_count_delta = 0
+    files_edited_delta: set[str] = set()
+    subagent_count_delta = 0
+    error_count_delta = 0
+    cumulative_input_delta = 0
+    cumulative_output_delta = 0
+    cumulative_cache_read_delta = 0
+    cumulative_cache_creation_delta = 0
+
+    for raw_line in lines:
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            obj = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+
+        event_type = obj.get("type", "")
+        data = obj.get("data") or {}
+        timestamp = obj.get("timestamp", "")
+
+        if event_type == "session.start":
+            ctx = data.get("context") or {}
+            if ctx.get("cwd"):
+                updates["cwd"] = ctx["cwd"]
+            if ctx.get("branch"):
+                updates["git_branch"] = ctx["branch"]
+            if data.get("selectedModel"):
+                updates["model"] = data["selectedModel"]
+            if data.get("startTime"):
+                updates["started_at"] = data["startTime"]
+            updates["status"] = "started"
+
+        elif event_type == "session.resume":
+            updates["status"] = "resumed"
+
+        elif event_type == "user.message":
+            content = data.get("content", "")
+            if isinstance(content, str) and content:
+                # Skip slash commands and system-injected messages
+                if not content.startswith("<") and not content.startswith("/"):
+                    turns_delta += 1
+                    updates["last_user_msg"] = content
+            updates["status"] = "thinking"
+
+        elif event_type == "assistant.intent":
+            intent = data.get("intent", "")
+            if intent:
+                updates["slug"] = intent
+
+        elif event_type == "assistant.turn_start":
+            updates["status"] = "thinking"
+
+        elif event_type == "assistant.message":
+            content = data.get("content", "")
+            if isinstance(content, str) and content.strip():
+                updates["last_assistant_msg"] = content.strip()
+            # Copilot CLI embeds outputTokens here (no assistant.usage events)
+            msg_out = data.get("outputTokens", 0) or 0
+            if msg_out:
+                latest_output = msg_out
+                cumulative_output_delta += msg_out
+            # Count tool requests
+            for tr in data.get("toolRequests", []):
+                tool_count_delta += 1
+                name = tr.get("name", "")
+                inp = tr.get("arguments") or {}
+                if name in _COPILOT_EDIT_TOOLS:
+                    fp = inp.get("path", "") or inp.get("file_path", "")
+                    if fp:
+                        files_edited_delta.add(fp)
+                elif name in ("task",):
+                    subagent_count_delta += 1
+
+        elif event_type == "assistant.usage":
+            inp_tokens = data.get("inputTokens", 0)
+            out_tokens = data.get("outputTokens", 0)
+            cache_read = data.get("cacheReadTokens", 0)
+            cache_write = data.get("cacheWriteTokens", 0)
+            latest_input = inp_tokens + cache_read + cache_write
+            latest_output = out_tokens
+            cumulative_input_delta += inp_tokens
+            cumulative_output_delta += out_tokens
+            cumulative_cache_read_delta += cache_read
+            cumulative_cache_creation_delta += cache_write
+            if data.get("model"):
+                updates["model"] = data["model"]
+
+        elif event_type == "tool.execution_start":
+            name = data.get("toolName", "")
+            if name:
+                updates["status"] = f"tool:{name}"
+
+        elif event_type == "tool.execution_complete":
+            if not data.get("success", True):
+                error_count_delta += 1
+            updates["status"] = "thinking"
+
+        elif event_type == "subagent.started":
+            subagent_count_delta += 1
+            updates["_running_agents_delta"] = updates.get("_running_agents_delta", 0) + 1
+
+        elif event_type == "subagent.completed":
+            updates["_running_agents_delta"] = updates.get("_running_agents_delta", 0) - 1
+
+        elif event_type == "subagent.failed":
+            error_count_delta += 1
+            updates["_running_agents_delta"] = updates.get("_running_agents_delta", 0) - 1
+
+        elif event_type == "session.idle":
+            updates["status"] = "idle"
+
+        elif event_type == "session.usage_info":
+            if data.get("tokenLimit"):
+                updates["token_limit"] = data["tokenLimit"]
+            if data.get("currentTokens"):
+                latest_input = data["currentTokens"]
+
+        elif event_type == "assistant.turn_end":
+            # After a turn ends, if no subsequent event changes status, it's idle
+            updates["status"] = "idle"
+
+        elif event_type == "session.model_change":
+            if data.get("newModel"):
+                updates["model"] = data["newModel"]
+
+        # Track last activity from any event with a timestamp
+        if timestamp:
+            updates["last_activity"] = timestamp
+
+    if latest_input:
+        updates["input_tokens"] = latest_input
+    if latest_output:
+        updates["output_tokens"] = latest_output
+
+    updates["_delta_turns"] = turns_delta
+    updates["_delta_tool_count"] = tool_count_delta
+    updates["_delta_files_edited"] = list(files_edited_delta)
+    updates["_delta_subagent_count"] = subagent_count_delta
+    updates["_delta_error_count"] = error_count_delta
+    updates["_delta_cumulative_input"] = cumulative_input_delta
+    updates["_delta_cumulative_output"] = cumulative_output_delta
+    updates["_delta_cumulative_cache_read"] = cumulative_cache_read_delta
+    updates["_delta_cumulative_cache_creation"] = cumulative_cache_creation_delta
+
+    return updates
+
+
+def parse_simple_yaml(path: Path) -> dict:
+    """Parse a flat YAML file (key: value per line) without PyYAML dependency."""
+    result: dict[str, str] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            colon = line.find(":")
+            if colon < 0:
+                continue
+            key = line[:colon].strip()
+            value = line[colon + 1:].strip()
+            result[key] = value
+    except OSError:
+        pass
+    return result
+
+
+def discover_copilot_sessions() -> list[dict]:
+    """Find active Copilot CLI sessions by scanning for lock files.
+
+    Returns list of dicts: {session_id, pid, session_dir, events_path}.
+    """
+    sessions: list[dict] = []
+    if not COPILOT_SESSION_DIR.is_dir():
+        return sessions
+
+    for session_dir in COPILOT_SESSION_DIR.iterdir():
+        if not session_dir.is_dir():
+            continue
+        sid = session_dir.name
+        events_path = session_dir / "events.jsonl"
+        if not events_path.exists():
+            continue
+
+        # Find lock file: inuse.<pid>.lock
+        pid = None
+        for lock_fp in session_dir.glob("inuse.*.lock"):
+            # Extract PID from filename
+            parts = lock_fp.stem.split(".")  # "inuse.<pid>"
+            if len(parts) >= 2:
+                try:
+                    pid = int(parts[1])
+                except ValueError:
+                    pass
+            # Also check file content for PID
+            if pid is None:
+                try:
+                    content = lock_fp.read_text().strip()
+                    if content.isdigit():
+                        pid = int(content)
+                except OSError:
+                    pass
+            break  # only one lock file expected
+
+        if pid is None:
+            continue  # no active lock, session not running
+
+        sessions.append({
+            "session_id": sid,
+            "pid": pid,
+            "session_dir": str(session_dir),
+            "events_path": str(events_path),
+        })
+
+    return sessions
 
 
 def read_json(path: Path) -> dict | None:
@@ -206,17 +451,40 @@ STALE_SECONDS = 60 * 60
 
 
 def _is_pid_alive(pid: int) -> bool:
-    """Check if a process with the given PID is still running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Process exists but we can't signal it — still alive
-        return True
-    except OSError:
-        return False
+    """Check if a process with the given PID is still running.
+
+    Works on Linux, macOS, and Windows.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        except (OSError, AttributeError):
+            # Fallback: use tasklist
+            try:
+                result = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                return str(pid) in result.stdout
+            except (OSError, subprocess.TimeoutExpired):
+                return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
 
 
 def cleanup_dead_sessions() -> int:
@@ -610,13 +878,186 @@ def poll_once() -> None:
             write_json(poller_fp, poller_data)
 
 
+def poll_copilot_sessions() -> None:
+    """Discover and poll all active Copilot CLI sessions.
+
+    For each active session (identified by an inuse.*.lock file), reads
+    workspace.yaml for metadata and incrementally parses events.jsonl.
+    Writes both hook-equivalent JSON and poller JSON to ~/.cctop/.
+    """
+    if not STATUS_DIR.is_dir():
+        STATUS_DIR.mkdir(parents=True, exist_ok=True)
+
+    copilot_sessions = discover_copilot_sessions()
+
+    for cs in copilot_sessions:
+        sid = cs["session_id"]
+        pid = cs["pid"]
+        events_path = cs["events_path"]
+        session_dir = Path(cs["session_dir"])
+
+        hook_fp = STATUS_DIR / f"{sid}.json"
+        poller_fp = STATUS_DIR / f"{sid}.poller.json"
+
+        # Read existing data
+        hook_data = read_json(hook_fp) or {}
+        poller_data = read_json(poller_fp) or {}
+
+        # Parse workspace.yaml for metadata (only on first discovery)
+        if not hook_data:
+            ws = parse_simple_yaml(session_dir / "workspace.yaml")
+            now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            hook_data = {
+                "session_id": sid,
+                "cwd": ws.get("cwd", ""),
+                "status": "started",
+                "current_tool": "",
+                "last_event": "SessionStart",
+                "last_activity": ws.get("created_at", now_iso),
+                "started_at": ws.get("created_at", now_iso),
+                "pid": pid,
+                "transcript_path": events_path,
+                "model": "",
+                "tool_count": 0,
+                "running_agents": 0,
+                "client": "copilot",
+            }
+            if ws.get("branch"):
+                poller_data["git_branch"] = ws["branch"]
+            if ws.get("cwd"):
+                poller_data["project_name"] = Path(ws["cwd"]).name
+            if ws.get("summary"):
+                poller_data["slug"] = ws["summary"]
+
+        # Ensure client tag is set
+        hook_data["client"] = "copilot"
+        hook_data["pid"] = pid
+
+        # Incremental events.jsonl parsing
+        offset = poller_data.get("_poller_offset", 0)
+        prev_inode = poller_data.get("_poller_inode", 0)
+
+        lines, new_offset, current_inode = read_new_jsonl_lines(
+            events_path, offset, prev_inode
+        )
+
+        changed = False
+
+        if lines:
+            updates = parse_copilot_events(lines)
+
+            # Extract hook-level fields from updates.
+            # If the hook plugin is active (last_event is a real hook event like
+            # PostToolUse), don't overwrite status — the hook provides more
+            # accurate real-time status than the poller's events.jsonl parsing.
+            hook_is_active = hook_data.get("last_event", "") in (
+                "PostToolUse", "PreToolUse", "UserPromptSubmit", "Stop",
+                "SubagentStop", "SessionStart",
+            )
+            if "status" in updates:
+                if not hook_is_active:
+                    hook_data["status"] = updates.pop("status")
+                else:
+                    updates.pop("status")
+            if "last_activity" in updates:
+                hook_data["last_activity"] = updates.pop("last_activity")
+            if "started_at" in updates and not hook_data.get("started_at"):
+                hook_data["started_at"] = updates.pop("started_at")
+            else:
+                updates.pop("started_at", None)
+            if "cwd" in updates:
+                hook_data["cwd"] = updates.pop("cwd")
+
+            # Handle running_agents delta
+            ra_delta = updates.pop("_running_agents_delta", 0)
+            if ra_delta:
+                hook_data["running_agents"] = max(
+                    0, hook_data.get("running_agents", 0) + ra_delta
+                )
+
+            _accumulate_deltas(poller_data, updates)
+            poller_data.update(updates)
+            changed = True
+
+        if new_offset != offset:
+            poller_data["_poller_offset"] = new_offset
+            changed = True
+        if current_inode != prev_inode:
+            poller_data["_poller_inode"] = current_inode
+            changed = True
+
+        # Update hook tool_count from poller data
+        hook_data["tool_count"] = poller_data.get("tool_count", 0)
+        if poller_data.get("model"):
+            hook_data["model"] = poller_data["model"]
+
+        if changed:
+            write_json(hook_fp, hook_data)
+            write_json(poller_fp, poller_data)
+
+
+def cleanup_copilot_sessions() -> int:
+    """Remove cctop files for Copilot sessions whose process has exited.
+
+    Checks for the absence of inuse.*.lock files or dead PIDs.
+    Returns the number of sessions cleaned up.
+    """
+    if not STATUS_DIR.is_dir():
+        return 0
+
+    removed = 0
+    for hook_fp in STATUS_DIR.glob("*.json"):
+        if hook_fp.name.endswith(".poller.json"):
+            continue
+        try:
+            hook = json.loads(hook_fp.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        if hook.get("client") != "copilot":
+            continue
+
+        sid = hook.get("session_id", hook_fp.stem)
+        session_dir = COPILOT_SESSION_DIR / sid
+
+        # If the session directory is gone, clean up
+        is_dead = not session_dir.is_dir()
+
+        if not is_dead:
+            # Check for lock files
+            lock_files = list(session_dir.glob("inuse.*.lock"))
+            if not lock_files:
+                is_dead = True
+            else:
+                # Check PID from lock file
+                pid = hook.get("pid")
+                if pid and isinstance(pid, int) and pid > 0:
+                    is_dead = not _is_pid_alive(pid)
+
+        if is_dead:
+            try:
+                hook_fp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            poller_fp = STATUS_DIR / f"{sid}.poller.json"
+            try:
+                poller_fp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            removed += 1
+
+    return removed
+
+
 def main() -> None:
     last_cleanup = 0.0
     while not _shutdown:
         poll_once()
+        poll_copilot_sessions()
         now = time.monotonic()
         if now - last_cleanup >= CLEANUP_INTERVAL:
             cleanup_dead_sessions()
+            cleanup_copilot_sessions()
             last_cleanup = now
         deadline = time.monotonic() + POLL_INTERVAL
         while time.monotonic() < deadline and not _shutdown:

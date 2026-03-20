@@ -33,7 +33,9 @@ from cctop_dashboard import (
     format_start_time,
     format_stop_reason,
     get_claude_pids,
+    scan_session_processes,
     check_session_health,
+    ProcessScan,
     load_sessions,
     purge_dead_sessions,
     STATUS_DIR,
@@ -181,11 +183,33 @@ def test_friendly_model_name_haiku():
 
 
 def test_friendly_model_name_unknown():
-    assert friendly_model_name("gpt-4o-mini") == "gpt-4o-mini"
+    assert friendly_model_name("gpt-4o-mini") == "gpt-4o-mini"[:16]
 
 
 def test_friendly_model_name_empty():
     assert friendly_model_name("") == ""
+
+
+# --- Multi-model friendly names (GPT, Gemini) ---
+
+def test_friendly_model_name_gpt_5():
+    assert friendly_model_name("gpt-5.4") == "GPT-5.4"
+
+
+def test_friendly_model_name_gpt_5_mini():
+    assert friendly_model_name("gpt-5-mini") == "GPT-5-mini"
+
+
+def test_friendly_model_name_gpt_5_codex():
+    assert friendly_model_name("gpt-5.1-codex") == "GPT-5.1-codex"
+
+
+def test_friendly_model_name_gemini():
+    assert friendly_model_name("gemini-3-pro-preview") == "Gemini 3 Pro (preview)"
+
+
+def test_friendly_model_name_claude_with_dots():
+    assert friendly_model_name("claude-opus-4.6-1m") == "opus 4.6-1m"
 
 
 # --- format_start_time tests ---
@@ -257,11 +281,11 @@ def fake_status_dir(tmp_path):
 
 @pytest.mark.asyncio
 async def test_app_starts_empty(fake_status_dir):
-    """Empty status dir → 16 columns, 0 rows."""
+    """Empty status dir → 17 columns, 0 rows."""
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         table = app.query_one(DataTable)
-        assert len(table.columns) == 16
+        assert len(table.columns) == 17
         assert table.row_count == 0
 
 
@@ -630,9 +654,9 @@ async def test_detail_panel_clears_when_sessions_removed(fake_status_dir):
 def test_get_claude_pids_basic():
     """Real claude sessions should be included."""
     ps_output = (
-        "  PID COMMAND\n"
-        " 1234 /usr/local/bin/claude\n"
-        " 5678 /opt/homebrew/bin/claude -r\n"
+        "  PID  PPID COMMAND\n"
+        " 1234     1 /usr/local/bin/claude\n"
+        " 5678     1 /opt/homebrew/bin/claude -r\n"
     )
     with patch("cctop_dashboard.subprocess.run") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(
@@ -645,9 +669,9 @@ def test_get_claude_pids_basic():
 def test_get_claude_pids_excludes_desktop_app():
     """Claude.app processes should be excluded."""
     ps_output = (
-        "  PID COMMAND\n"
-        " 1234 /Applications/Claude.app/Contents/MacOS/Claude\n"
-        " 5678 /usr/local/bin/claude\n"
+        "  PID  PPID COMMAND\n"
+        " 1234     1 /Applications/Claude.app/Contents/MacOS/Claude\n"
+        " 5678     1 /usr/local/bin/claude\n"
     )
     with patch("cctop_dashboard.subprocess.run") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(
@@ -660,9 +684,9 @@ def test_get_claude_pids_excludes_desktop_app():
 def test_get_claude_pids_excludes_teammates():
     """Teammate subagents (--parent-session-id) should be excluded."""
     ps_output = (
-        "  PID COMMAND\n"
-        " 1234 /usr/local/bin/claude --parent-session-id abc123\n"
-        " 5678 /usr/local/bin/claude\n"
+        "  PID  PPID COMMAND\n"
+        " 1234     1 /usr/local/bin/claude --parent-session-id abc123\n"
+        " 5678     1 /usr/local/bin/claude\n"
     )
     with patch("cctop_dashboard.subprocess.run") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(
@@ -675,11 +699,11 @@ def test_get_claude_pids_excludes_teammates():
 def test_get_claude_pids_excludes_mcp_and_uvx():
     """MCP servers and uvx processes should be excluded."""
     ps_output = (
-        "  PID COMMAND\n"
-        " 1000 /usr/local/bin/claude\n"
-        " 2000 mcp-server-claude --port 3000\n"
-        " 3000 uvx claude-mcp\n"
-        " 4000 caffeinate -w 1000\n"
+        "  PID  PPID COMMAND\n"
+        " 1000     1 /usr/local/bin/claude\n"
+        " 2000     1 mcp-server-claude --port 3000\n"
+        " 3000     1 uvx claude-mcp\n"
+        " 4000     1 caffeinate -w 1000\n"
     )
     with patch("cctop_dashboard.subprocess.run") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(
@@ -699,10 +723,10 @@ def test_get_claude_pids_handles_subprocess_error():
 def test_get_claude_pids_excludes_non_claude_basename():
     """Processes where basename is not 'claude' should be excluded."""
     ps_output = (
-        "  PID COMMAND\n"
-        " 1000 /usr/local/bin/claude\n"
-        " 2000 /usr/local/bin/claude-dev\n"
-        " 3000 python claude_helper.py\n"
+        "  PID  PPID COMMAND\n"
+        " 1000     1 /usr/local/bin/claude\n"
+        " 2000     1 /usr/local/bin/claude-dev\n"
+        " 3000     1 python claude_helper.py\n"
     )
     with patch("cctop_dashboard.subprocess.run") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(
@@ -710,6 +734,30 @@ def test_get_claude_pids_excludes_non_claude_basename():
         )
         pids = get_claude_pids()
     assert pids == {1000}
+
+
+def test_scan_copilot_child_processes_deduped():
+    """Copilot CLI spawns child processes; session_count should reflect unique sessions."""
+    ps_output = (
+        "  PID  PPID COMMAND\n"
+        # Session 1: node wrapper (excluded) → copilot → copilot
+        " 1000   999 node /usr/bin/copilot --yolo\n"
+        " 1001  1000 /lib/copilot-linux-x64/copilot --yolo\n"
+        " 1002  1001 /lib/copilot-linux-x64/copilot --yolo\n"
+        # Session 2: same pattern
+        " 2000   888 node /usr/bin/copilot\n"
+        " 2001  2000 /lib/copilot-linux-x64/copilot\n"
+        " 2002  2001 /lib/copilot-linux-x64/copilot\n"
+        # A standalone claude session (no children)
+        " 3000     1 /usr/local/bin/claude\n"
+    )
+    with patch("cctop_dashboard.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=ps_output, stderr=""
+        )
+        scan = scan_session_processes()
+    assert scan.all_pids == {1001, 1002, 2001, 2002, 3000}
+    assert scan.session_count == 3
 
 
 # --- check_session_health() unit tests ---
@@ -721,8 +769,8 @@ def test_health_all_live():
         SessionInfo(session_id="a", pid=100),
         SessionInfo(session_id="b", pid=200),
     ]
-    pids = {100, 200}
-    health = check_session_health(sessions, pids)
+    scan = ProcessScan(all_pids={100, 200}, session_count=2)
+    health = check_session_health(sessions, scan)
     assert not health.has_mismatch
     assert health.stale_ids == []
     assert health.untracked_count == 0
@@ -735,20 +783,20 @@ def test_health_stale_sessions():
         SessionInfo(session_id="a", pid=100),
         SessionInfo(session_id="b", pid=200),
     ]
-    pids = {100}  # PID 200 is dead
-    health = check_session_health(sessions, pids)
+    scan = ProcessScan(all_pids={100}, session_count=1)
+    health = check_session_health(sessions, scan)
     assert health.has_mismatch
     assert health.stale_ids == ["b"]
     assert "1 stale session" in health.message
 
 
 def test_health_untracked_processes():
-    """More processes than tracked sessions, untracked_count > 0."""
+    """More session roots than tracked sessions, untracked_count > 0."""
     sessions = [
         SessionInfo(session_id="a", pid=100),
     ]
-    pids = {100, 200, 300}  # 2 extra processes
-    health = check_session_health(sessions, pids)
+    scan = ProcessScan(all_pids={100, 200, 300}, session_count=3)
+    health = check_session_health(sessions, scan)
     assert health.has_mismatch
     assert health.untracked_count == 2
     assert "2 sessions not tracked" in health.message
@@ -761,8 +809,8 @@ def test_health_mixed_scenario():
         SessionInfo(session_id="b", pid=200),  # dead
         SessionInfo(session_id="c", pid=300),  # dead
     ]
-    pids = {100, 400, 500}  # 200 and 300 are gone, 400 and 500 are new
-    health = check_session_health(sessions, pids)
+    scan = ProcessScan(all_pids={100, 400, 500}, session_count=3)
+    health = check_session_health(sessions, scan)
     assert health.has_mismatch
     assert set(health.stale_ids) == {"b", "c"}
     # live_tracked = 3 - 2 = 1, untracked = 3 - 1 = 2
@@ -778,8 +826,8 @@ def test_health_no_pid_sessions_ignored():
         SessionInfo(session_id="a", pid=None),
         SessionInfo(session_id="b", pid=100),
     ]
-    pids = {100}
-    health = check_session_health(sessions, pids)
+    scan = ProcessScan(all_pids={100}, session_count=1)
+    health = check_session_health(sessions, scan)
     assert health.stale_ids == []
     # live_tracked = 2 - 0 = 2, untracked = max(0, 1 - 2) = 0
     assert health.untracked_count == 0
@@ -791,7 +839,7 @@ def test_health_status_message_plural():
         SessionInfo(session_id="a", pid=100),
         SessionInfo(session_id="b", pid=200),
     ]
-    health = check_session_health(sessions, set())
+    health = check_session_health(sessions, ProcessScan())
     assert "2 stale sessions" in health.message
 
 
@@ -800,8 +848,19 @@ def test_health_status_message_singular():
     sessions = [
         SessionInfo(session_id="a", pid=100),
     ]
-    health = check_session_health(sessions, set())
+    health = check_session_health(sessions, ProcessScan())
     assert "1 stale session " in health.message
+
+
+def test_health_copilot_child_processes_deduped():
+    """Copilot CLI child processes should not inflate the session count."""
+    sessions = [
+        SessionInfo(session_id="a", pid=300),
+    ]
+    scan = ProcessScan(all_pids={100, 200, 300}, session_count=1)
+    health = check_session_health(sessions, scan)
+    assert not health.has_mismatch
+    assert health.untracked_count == 0
 
 
 # --- Health bar TUI integration tests ---
@@ -812,7 +871,7 @@ async def test_health_bar_shows_on_mismatch(fake_status_dir):
     """Health bar should be visible when there are stale sessions."""
     write_fake_session(fake_status_dir, "stale-session", pid=99999)
     app = SessionsDashboard()
-    with patch("cctop_dashboard.get_claude_pids", return_value=set()):
+    with patch("cctop_dashboard.scan_session_processes", return_value=ProcessScan()):
         async with app.run_test() as pilot:
             await _wait_for_rows(pilot, app)
             bar = app.query_one("#health-bar", Static)
@@ -827,7 +886,8 @@ async def test_health_bar_hidden_when_matching(fake_status_dir):
     my_pid = os.getpid()
     write_fake_session(fake_status_dir, "live-session", pid=my_pid)
     app = SessionsDashboard()
-    with patch("cctop_dashboard.get_claude_pids", return_value={my_pid}):
+    with patch("cctop_dashboard.scan_session_processes",
+               return_value=ProcessScan(all_pids={my_pid}, session_count=1)):
         async with app.run_test() as pilot:
             await _wait_for_rows(pilot, app)
             bar = app.query_one("#health-bar", Static)
@@ -840,8 +900,8 @@ async def test_health_bar_shows_untracked(fake_status_dir):
     my_pid = os.getpid()
     write_fake_session(fake_status_dir, "live-session", pid=my_pid)
     app = SessionsDashboard()
-    # Return our PID plus two extras not in cctop
-    with patch("cctop_dashboard.get_claude_pids", return_value={my_pid, 88888, 77777}):
+    with patch("cctop_dashboard.scan_session_processes",
+               return_value=ProcessScan(all_pids={my_pid, 88888, 77777}, session_count=3)):
         async with app.run_test() as pilot:
             await _wait_for_rows(pilot, app)
             bar = app.query_one("#health-bar", Static)
