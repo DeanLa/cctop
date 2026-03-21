@@ -10,7 +10,6 @@ written by the hook (cctop-hook.sh) and the poller (cctop-poller.py).
 
 from __future__ import annotations
 
-# --- Imports ---
 import json
 import os
 import re
@@ -33,6 +32,8 @@ from textual.binding import Binding
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.containers import VerticalScroll
+from textual.coordinate import Coordinate
+from textual.geometry import Region
 from textual.widgets import DataTable, Footer, Header, OptionList, Static
 from textual.widgets.option_list import Option
 
@@ -203,7 +204,6 @@ class SessionInfo:
     output_tokens: int = 0
     custom_title: str = ""
     tool_count: int = 0
-    # Phase 2 fields
     turns: int = 0
     files_edited: list[str] | None = None
     subagent_count: int = 0
@@ -259,10 +259,8 @@ class ColumnDef:
     key: str                          # internal identifier, e.g. "slug"
     cell: Callable[[SessionInfo], object]  # renders a SessionInfo into a cell value
     header: str = ""                  # empty = derive from key
-    sort_label: str = ""              # non-empty = appears in sort picker
     sort_key: Callable[[SessionInfo], object] | None = None  # extracts comparable value for sorting
     reverse_sort: bool = False        # True = largest/newest first
-    sort_position: int = 0            # order in sort picker; 0 = not sortable
 
     def __post_init__(self) -> None:
         if not self.header:
@@ -275,62 +273,58 @@ COLUMNS: tuple[ColumnDef, ...] = (
                   Text.assemble(("● ", "#e0af68"), s.custom_title) if s.custom_title
                   else Text.assemble(("○ ", "dim"), s.session_id[:8])
               ),
-              sort_label="Name", sort_position=2,
               sort_key=lambda s: (s.custom_title or s.slug or s.session_id).lower()),
     ColumnDef("project",
-              cell=lambda s: s.project_name or (os.path.basename(s.cwd) if s.cwd else "")),
+              cell=lambda s: s.project_name or (os.path.basename(s.cwd) if s.cwd else ""),
+              sort_key=lambda s: (s.project_name or os.path.basename(s.cwd) if s.cwd else "").lower()),
     ColumnDef("branch",
-              cell=lambda s: s.git_branch[:20]),
+              cell=lambda s: s.git_branch[:20],
+              sort_key=lambda s: s.git_branch.lower()),
     ColumnDef("status",
               cell=lambda s: styled_status(s.status, s.last_activity),
-              sort_label="Status", sort_position=3,
               sort_key=lambda s: s.status.lower()),
     ColumnDef("model",
-              cell=lambda s: friendly_model_name(s.model)),
+              cell=lambda s: friendly_model_name(s.model),
+              sort_key=lambda s: s.model.lower()),
     ColumnDef("ctx_pct", header="Ctx%",
-              cell=lambda s: f"{s.context_tokens * 100 // CONTEXT_WINDOW}%" if s.context_tokens else ""),
+              cell=lambda s: f"{s.context_tokens * 100 // CONTEXT_WINDOW}%" if s.context_tokens else "",
+              reverse_sort=True, sort_key=lambda s: s.context_tokens),
     ColumnDef("tokens",
               cell=lambda s: format_tokens(s.context_tokens),
-              sort_label="Tokens", sort_position=6, reverse_sort=True,
-              sort_key=lambda s: s.context_tokens),
+              reverse_sort=True, sort_key=lambda s: s.context_tokens),
     ColumnDef("tools",
               cell=lambda s: str(s.tool_count) if s.tool_count else "",
-              sort_label="Tool Count", sort_position=7, reverse_sort=True,
-              sort_key=lambda s: s.tool_count),
+              reverse_sort=True, sort_key=lambda s: s.tool_count),
     ColumnDef("files",
               cell=lambda s: str(len(s.files_edited)) if s.files_edited else "",
-              sort_label="Files Edited", sort_position=8, reverse_sort=True,
-              sort_key=lambda s: len(s.files_edited) if s.files_edited else 0),
+              reverse_sort=True, sort_key=lambda s: len(s.files_edited) if s.files_edited else 0),
     ColumnDef("agents",
               cell=lambda s: str(s.running_agents) if s.running_agents else "",
-              sort_label="Running Agents", sort_position=9, reverse_sort=True,
-              sort_key=lambda s: s.running_agents),
+              reverse_sort=True, sort_key=lambda s: s.running_agents),
     ColumnDef("errors",
               cell=lambda s: Text(str(s.error_count), style="red") if s.error_count else "",
-              sort_label="Errors", sort_position=10, reverse_sort=True,
-              sort_key=lambda s: s.error_count),
+              reverse_sort=True, sort_key=lambda s: s.error_count),
     ColumnDef("turns",
               cell=lambda s: str(s.turns) if s.turns else "",
-              sort_label="Turns", sort_position=5, reverse_sort=True,
-              sort_key=lambda s: s.turns),
+              reverse_sort=True, sort_key=lambda s: s.turns),
     ColumnDef("stop_reason", header="StopRsn",
-              cell=lambda s: format_stop_reason(s.stop_reason)),
+              cell=lambda s: format_stop_reason(s.stop_reason),
+              sort_key=lambda s: s.stop_reason.lower()),
     ColumnDef("duration",
               cell=lambda s: format_duration(s.started_at),
-              sort_label="Duration", sort_position=4, reverse_sort=True,
-              sort_key=lambda s: s.started_at or ""),
+              reverse_sort=True, sort_key=lambda s: s.started_at or ""),
     ColumnDef("started",
-              cell=lambda s: format_start_time(s.started_at)),
+              cell=lambda s: format_start_time(s.started_at),
+              reverse_sort=True, sort_key=lambda s: s.started_at or ""),
     ColumnDef("activity",
               cell=lambda s: format_relative_time(s.last_activity),
-              sort_label="Last Activity", sort_position=1, reverse_sort=True,
-              sort_key=lambda s: s.last_activity or ""),
+              reverse_sort=True, sort_key=lambda s: s.last_activity or ""),
 )
 
 _COLUMN_BY_KEY: dict[str, ColumnDef] = {c.key: c for c in COLUMNS}
 
 
-def _row_cells(s: SessionInfo, columns: tuple[ColumnDef, ...] = COLUMNS) -> tuple:
+def _row_cells(s: SessionInfo, columns: tuple[ColumnDef, ...]) -> tuple:
     """Compute all cell values for one session row."""
     return tuple(c.cell(s) for c in columns)
 
@@ -567,51 +561,64 @@ class ColumnPicker(ModalScreen[set]):
         align: center middle;
     }
     #column-list {
-        width: 30;
+        width: 50;
         height: auto;
         max-height: 20;
         background: $surface;
         border: tall $accent;
         padding: 0 1;
     }
+    #column-keys {
+        width: 50;
+        height: 1;
+        background: $surface;
+        color: $text-muted;
+        content-align: center middle;
+    }
     """
 
     BINDINGS = [
-        Binding("escape", "dismiss_picker", "Done", show=False),
+        Binding("escape", "cancel_picker", "Cancel", show=False),
         Binding("space", "toggle_highlighted", "Toggle", show=False),
+        Binding("enter", "dismiss_picker", "Apply", show=False),
+        Binding("c", "dismiss_picker", "Apply", show=False),
     ]
 
     def __init__(self, all_columns: tuple[ColumnDef, ...], hidden: set[str]) -> None:
         super().__init__()
         self._all_columns = all_columns
         self._hidden = set(hidden)
+        self._original_hidden = set(hidden)
+
+    def _build_options(self) -> list[Option]:
+        return [
+            Option(f"{'○' if c.key in self._hidden else '●'} {c.header}", id=c.key)
+            for c in self._all_columns
+        ]
 
     def compose(self) -> ComposeResult:
-        options = []
-        for c in self._all_columns:
-            check = "[ ]" if c.key in self._hidden else "[x]"
-            options.append(Option(f"{check} {c.header}", id=c.key))
-        yield OptionList(*options, id="column-list")
+        yield OptionList(*self._build_options(), id="column-list")
+        yield Static("space toggle · enter/c apply · esc cancel", id="column-keys")
 
     def _toggle(self, key: str) -> None:
         """Toggle a column's visibility."""
         if key in self._hidden:
             self._hidden.discard(key)
-        else:
-            if len(self._all_columns) - len(self._hidden) <= 1:
-                return
+        elif len(self._all_columns) - len(self._hidden) > 1:
             self._hidden.add(key)
+        else:
+            return
         ol = self.query_one("#column-list", OptionList)
         highlighted = ol.highlighted
         ol.clear_options()
-        for c in self._all_columns:
-            check = "[ ]" if c.key in self._hidden else "[x]"
-            ol.add_option(Option(f"{check} {c.header}", id=c.key))
+        for opt in self._build_options():
+            ol.add_option(opt)
         if highlighted is not None:
             ol.highlighted = highlighted
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self._toggle(event.option_id)
+        # enter triggers OptionList select — dismiss the picker instead of toggling
+        self.action_dismiss_picker()
 
     def action_toggle_highlighted(self) -> None:
         ol = self.query_one("#column-list", OptionList)
@@ -622,6 +629,9 @@ class ColumnPicker(ModalScreen[set]):
 
     def action_dismiss_picker(self) -> None:
         self.dismiss(self._hidden)
+
+    def action_cancel_picker(self) -> None:
+        self.dismiss(self._original_hidden)
 
 
 # --- Confirm Kill Modal ---
@@ -668,6 +678,53 @@ class ConfirmKillScreen(ModalScreen[bool]):
 
 
 
+# --- DataTable subclass for column indicator ---
+
+
+class _CctopTable(DataTable):
+    """DataTable with a column-selection indicator rendered at native speed.
+
+    Overrides DataTable's left/right actions so the key path is identical to
+    the native row cursor: widget binding → action → reactive set → watcher
+    → targeted region refresh.  No App-level priority bindings needed.
+    """
+
+    selected_column: reactive[int] = reactive(0, init=False)
+
+    def action_cursor_left(self) -> None:
+        n = len(self.columns)
+        if n:
+            self.selected_column = (self.selected_column - 1) % n
+
+    def action_cursor_right(self) -> None:
+        n = len(self.columns)
+        if n:
+            self.selected_column = (self.selected_column + 1) % n
+
+    def _should_highlight(self, cursor, target_cell, type_of_cursor):
+        if super()._should_highlight(cursor, target_cell, type_of_cursor):
+            return True
+        cell_row, cell_col = target_cell
+        return cell_row == -1 and cell_col == self.selected_column
+
+    def _render_line_in_row(self, row_key, line_no, base_style, cursor_location, hover_location):
+        if row_key is self._header_row_key:
+            cursor_location = Coordinate(cursor_location[0], self.selected_column)
+        return super()._render_line_in_row(
+            row_key, line_no, base_style, cursor_location, hover_location,
+        )
+
+    def watch_selected_column(self, old_value: int, new_value: int) -> None:
+        header_height = self.header_height if self.show_header else 0
+        if header_height == 0:
+            return
+        for col_idx in (old_value, new_value):
+            if not self.is_valid_column_index(col_idx):
+                continue
+            region = self._get_column_region(col_idx)
+            self._refresh_region(Region(region.x, 0, region.width, header_height))
+
+
 # --- Textual App ---
 
 
@@ -707,8 +764,6 @@ class SessionsDashboard(App):
         Binding("q", "quit", "Quit"),
         Binding("r", "force_refresh", "Refresh"),
         Binding("R", "purge_dead", "Purge dead"),
-        Binding("left", "move_column(-1)", show=False, priority=True),
-        Binding("right", "move_column(1)", show=False, priority=True),
         Binding("s", "sort_by_column", "Sort col"),
         Binding("h", "hide_column", "Hide col"),
         Binding("c", "show_columns", "Columns"),
@@ -717,10 +772,11 @@ class SessionsDashboard(App):
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
+    sort_reverse: reactive[bool] = reactive(True, init=False)
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield DataTable(id="table")
+        yield _CctopTable(id="table")
         yield Static("", id="health-bar")
         with VerticalScroll(id="detail-scroll"):
             yield Static("", id="detail")
@@ -739,27 +795,47 @@ class SessionsDashboard(App):
         self._last_health: HealthStatus | None = None
         self._last_row_keys: list[str] = []
         self._hidden_columns: set[str] = set()
-        self._active_col_idx: int = 0
 
     def _setup_table(self) -> None:
         """Configure the DataTable with columns from COLUMNS definitions."""
-        table = self.query_one(DataTable)
+        table = self.query_one(_CctopTable)
         table.cursor_type = "row"
         vis = self._visible_columns()
-        self._column_keys = table.add_columns(*[c.header for c in vis])
+        self._column_keys = table.add_columns(*self._column_headers(vis))
         self._update_column_indicator()
 
     def _visible_columns(self) -> tuple[ColumnDef, ...]:
         """Return COLUMNS filtered by _hidden_columns."""
         return tuple(c for c in COLUMNS if c.key not in self._hidden_columns)
 
+    def _column_headers(self, vis: tuple[ColumnDef, ...]) -> list[str]:
+        """Build header labels with sort arrow on the sorted column, space placeholder on others."""
+        headers = []
+        for c in vis:
+            if c.key == self.sort_mode:
+                arrow = "▼" if self.sort_reverse else "▲"
+                headers.append(f"{c.header} {arrow}")
+            else:
+                headers.append(f"{c.header}  ")
+        return headers
+
+    def _update_sort_headers(self) -> None:
+        """Update column header labels to reflect current sort column and direction."""
+        table = self.query_one(_CctopTable)
+        vis = self._visible_columns()
+        headers = self._column_headers(vis)
+        for col_key, label in zip(self._column_keys, headers):
+            table.columns[col_key].label = Text(label)
+        table._update_count += 1
+        table.refresh()
+
     def _rebuild_columns(self) -> None:
         """Clear all columns and rows, re-add visible ones."""
-        table = self.query_one(DataTable)
+        table = self.query_one(_CctopTable)
         saved_key = self._save_cursor(table)
         table.clear(columns=True)
         vis = self._visible_columns()
-        self._column_keys = table.add_columns(*[c.header for c in vis])
+        self._column_keys = table.add_columns(*self._column_headers(vis))
         ordered = self._sorted_sessions()
         for s in ordered:
             table.add_row(*_row_cells(s, vis), key=s.session_id)
@@ -768,16 +844,11 @@ class SessionsDashboard(App):
         self._update_column_indicator()
 
     def _update_column_indicator(self) -> None:
-        """Bold-underline the active column header, plain for others."""
-        table = self.query_one(DataTable)
-        vis = self._visible_columns()
-        for i, col_key in enumerate(self._column_keys):
-            col = table.columns[col_key]
-            if i == self._active_col_idx:
-                col.label = Text(vis[i].header, style="bold underline")
-            else:
-                col.label = Text(vis[i].header)
-        table.refresh()
+        """Clamp the column indicator after column rebuild."""
+        table = self.query_one(_CctopTable)
+        max_col = max(0, len(table.columns) - 1)
+        if table.selected_column > max_col:
+            table.selected_column = max_col
 
     # --- Actions ---------------------------------------------------------
 
@@ -789,26 +860,31 @@ class SessionsDashboard(App):
         """Remove dead session files and refresh."""
         self._do_purge()
 
-    def action_move_column(self, delta: int) -> None:
-        """Move the active column indicator left or right."""
-        vis = self._visible_columns()
-        if not vis:
-            return
-        new_idx = max(0, min(len(vis) - 1, self._active_col_idx + delta))
-        if new_idx != self._active_col_idx:
-            self._active_col_idx = new_idx
-            self._update_column_indicator()
-
     def action_sort_by_column(self) -> None:
-        """Sort by the currently active column."""
+        """Sort by the currently active column. Press again to toggle direction."""
         vis = self._visible_columns()
-        if not vis or self._active_col_idx >= len(vis):
+        col_idx = self.query_one(_CctopTable).selected_column
+        if not vis or col_idx >= len(vis):
             return
-        col = vis[self._active_col_idx]
+        col = vis[col_idx]
         if col.sort_key is None:
             self.notify(f"'{col.header}' is not sortable", severity="warning")
             return
-        self.sort_mode = col.key
+        if self.sort_mode == col.key:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_mode = col.key
+            self.sort_reverse = col.reverse_sort
+
+    def _apply_column_visibility(self) -> None:
+        """Rebuild columns after visibility changes, reset sort if needed."""
+        self._rebuild_columns()
+        if self.sort_mode in self._hidden_columns:
+            fallback = self._visible_columns()[0]
+            self.sort_mode = fallback.key
+            self.sort_reverse = fallback.reverse_sort
+        else:
+            self._update_subtitle()
 
     def action_hide_column(self) -> None:
         """Hide the currently active column."""
@@ -816,28 +892,16 @@ class SessionsDashboard(App):
         if len(vis) <= 1:
             self.notify("Cannot hide the last column", severity="warning")
             return
-        col = vis[self._active_col_idx]
+        col = vis[self.query_one(_CctopTable).selected_column]
         self._hidden_columns.add(col.key)
-        new_vis = self._visible_columns()
-        self._active_col_idx = min(self._active_col_idx, len(new_vis) - 1)
-        self._rebuild_columns()
-        if self.sort_mode == col.key:
-            self.sort_mode = next((c.key for c in new_vis if c.sort_key), "activity")
-        else:
-            self._update_subtitle()
+        self._apply_column_visibility()
 
     def action_show_columns(self) -> None:
         """Open the column picker to toggle column visibility."""
         def _on_dismiss(result: set | None) -> None:
             if result is not None:
                 self._hidden_columns = result
-                vis = self._visible_columns()
-                self._active_col_idx = min(self._active_col_idx, max(0, len(vis) - 1))
-                self._rebuild_columns()
-                if self.sort_mode in self._hidden_columns:
-                    self.sort_mode = next((c.key for c in vis if c.sort_key), "activity")
-                else:
-                    self._update_subtitle()
+                self._apply_column_visibility()
         self.push_screen(ColumnPicker(COLUMNS, self._hidden_columns), callback=_on_dismiss)
 
     def action_show_all_columns(self) -> None:
@@ -846,13 +910,11 @@ class SessionsDashboard(App):
             self.notify("All columns already visible", severity="information")
             return
         self._hidden_columns.clear()
-        self._active_col_idx = min(self._active_col_idx, len(COLUMNS) - 1)
-        self._rebuild_columns()
-        self._update_subtitle()
+        self._apply_column_visibility()
 
     def action_kill_session(self) -> None:
         """Kill the highlighted session's process."""
-        table = self.query_one(DataTable)
+        table = self.query_one(_CctopTable)
         row_key = self._save_cursor(table)
         session = self._find_session(row_key)
         if session is None:
@@ -884,8 +946,15 @@ class SessionsDashboard(App):
         self.call_from_thread(self._schedule_refresh)
 
     def watch_sort_mode(self, new_value: str) -> None:
-        """Re-sort the table when sort_mode changes."""
+        self._on_sort_changed()
+
+    def watch_sort_reverse(self, new_value: bool) -> None:
+        self._on_sort_changed()
+
+    def _on_sort_changed(self) -> None:
+        """Re-sort table, update header arrows, refresh subtitle."""
         self._repopulate_table()
+        self._update_sort_headers()
         self._update_subtitle()
 
     # --- Data loading ----------------------------------------------------
@@ -925,7 +994,7 @@ class SessionsDashboard(App):
         """Update the header subtitle with session count and sort info."""
         count = len(self._sessions)
         col_def = _COLUMN_BY_KEY.get(self.sort_mode)
-        label = col_def.sort_label if col_def and col_def.sort_label else self.sort_mode
+        label = col_def.header if col_def else self.sort_mode
         self.sub_title = f"{_plural(count, 'session')} · sort: {label}"
 
     def _update_health_bar(self) -> None:
@@ -956,23 +1025,21 @@ class SessionsDashboard(App):
         """Return sessions sorted according to the current sort_mode."""
         col_def = _COLUMN_BY_KEY.get(self.sort_mode, _COLUMN_BY_KEY["activity"])
         sort_fn = col_def.sort_key or (lambda s: s.last_activity or "")
-        return sorted(self._sessions, key=sort_fn, reverse=col_def.reverse_sort)
+        return sorted(self._sessions, key=sort_fn, reverse=self.sort_reverse)
 
-    def _patch_table_cells(self, ordered: list[SessionInfo]) -> None:
+    def _patch_table_cells(self, ordered: list[SessionInfo], vis: tuple[ColumnDef, ...]) -> None:
         """Update cell values in place without rebuilding the table."""
-        table = self.query_one(DataTable)
-        vis = self._visible_columns()
+        table = self.query_one(_CctopTable)
         for s in ordered:
             cells = _row_cells(s, vis)
             for col_key, value in zip(self._column_keys, cells):
                 table.update_cell(s.session_id, col_key, value)
 
-    def _rebuild_table(self, ordered: list[SessionInfo]) -> None:
+    def _rebuild_table(self, ordered: list[SessionInfo], vis: tuple[ColumnDef, ...]) -> None:
         """Clear and rebuild all rows, preserving cursor position."""
-        table = self.query_one(DataTable)
+        table = self.query_one(_CctopTable)
         saved_key = self._save_cursor(table)
         table.clear()
-        vis = self._visible_columns()
         for s in ordered:
             table.add_row(*_row_cells(s, vis), key=s.session_id)
         self._restore_cursor(table, saved_key)
@@ -1000,11 +1067,12 @@ class SessionsDashboard(App):
         """Sort sessions and update the table, using cell patches when possible."""
         ordered = self._sorted_sessions()
         new_keys = [s.session_id for s in ordered]
+        vis = self._visible_columns()
 
         if new_keys == self._last_row_keys:
-            self._patch_table_cells(ordered)
+            self._patch_table_cells(ordered, vis)
         else:
-            self._rebuild_table(ordered)
+            self._rebuild_table(ordered, vis)
             self._last_row_keys = new_keys
 
         if not ordered:

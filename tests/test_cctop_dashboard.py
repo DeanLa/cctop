@@ -279,21 +279,22 @@ async def test_sessions_render(fake_status_dir):
 
 @pytest.mark.asyncio
 async def test_column_move_left_right(fake_status_dir):
-    """Left/right should move the active column index."""
+    """Left/right should move the selected column on the table."""
     write_fake_session(fake_status_dir, "aaaa-1111")
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
-        assert app._active_col_idx == 0
+        table = app.query_one(DataTable)
+        assert table.selected_column == 0
         await pilot.press("right")
         await pilot.pause()
-        assert app._active_col_idx == 1
+        assert table.selected_column == 1
         await pilot.press("right")
         await pilot.pause()
-        assert app._active_col_idx == 2
+        assert table.selected_column == 2
         await pilot.press("left")
         await pilot.pause()
-        assert app._active_col_idx == 1
+        assert table.selected_column == 1
 
 
 @pytest.mark.asyncio
