@@ -24,6 +24,11 @@ eval "$(echo "$input" | jq -r '
   @sh "SOURCE=\(.source // "")"
 ' 2>/dev/null)"
 
+# Don't trust transcript_path if the file doesn't exist (happens after
+# EnterWorktree — Claude reports a path based on the worktree cwd, but
+# the actual transcript stays at the original project path).
+[ -n "$TRANSCRIPT_PATH" ] && [ ! -f "$TRANSCRIPT_PATH" ] && TRANSCRIPT_PATH=""
+
 [ -z "$SESSION_ID" ] && exit 0
 
 STATUS_FILE="$STATUS_DIR/$SESSION_ID.json"
