@@ -44,6 +44,7 @@ CONTEXT_WINDOW = 200_000
 STALE_SECONDS = 60 * 60
 HEALTH_CHECK_INTERVAL = 10.0  # seconds between ps-based health checks
 
+
 def _plural(n: int, word: str) -> str:
     """Return e.g. '3 files' or '1 file'."""
     return f"{n} {word}{'s' if n != 1 else ''}"
@@ -56,7 +57,9 @@ def _clean_user_msg(msg: str) -> str:
     return msg
 
 
-def _render_message(label: str, text: str | None, max_chars: int = 500) -> list[Text | RichMarkdown]:
+def _render_message(
+    label: str, text: str | None, max_chars: int = 500
+) -> list[Text | RichMarkdown]:
     """Render a labeled message as markdown. Returns list of Rich renderables."""
     text = (text or "").strip()
     if not text:
@@ -85,6 +88,7 @@ STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "tool:Grep": ("cyan", "searching"),
     "ended": ("dim", "ended"),
 }
+
 
 def friendly_model_name(model: str) -> str:
     """Human-friendly short name for the table column.
@@ -229,7 +233,6 @@ class SessionInfo:
         return self.input_tokens
 
 
-
 # --- Helper functions ---
 
 
@@ -258,11 +261,13 @@ def styled_status(raw: str, last_activity: str) -> Text:
 class ColumnDef:
     """Definition for one table column: header, cell renderer, and optional sort config."""
 
-    key: str                          # internal identifier, e.g. "slug"
+    key: str  # internal identifier, e.g. "slug"
     cell: Callable[[SessionInfo], object]  # renders a SessionInfo into a cell value
-    header: str = ""                  # empty = derive from key
-    sort_key: Callable[[SessionInfo], object] | None = None  # extracts comparable value for sorting
-    reverse_sort: bool = False        # True = largest/newest first
+    header: str = ""  # empty = derive from key
+    sort_key: Callable[[SessionInfo], object] | None = (
+        None  # extracts comparable value for sorting
+    )
+    reverse_sort: bool = False  # True = largest/newest first
 
     def __post_init__(self) -> None:
         if not self.header:
@@ -270,57 +275,107 @@ class ColumnDef:
 
 
 COLUMNS: tuple[ColumnDef, ...] = (
-    ColumnDef("slug", header="Name",
-              cell=lambda s: (
-                  Text.assemble(("● ", "#e0af68"), s.custom_title) if s.custom_title
-                  else Text.assemble(("○ ", "dim"), s.session_id[:8])
-              ),
-              sort_key=lambda s: (s.custom_title or s.slug or s.session_id).lower()),
-    ColumnDef("project",
-              cell=lambda s: s.project_name or (os.path.basename(s.cwd) if s.cwd else ""),
-              sort_key=lambda s: (s.project_name or os.path.basename(s.cwd) if s.cwd else "").lower()),
-    ColumnDef("branch",
-              cell=lambda s: s.git_branch[:20],
-              sort_key=lambda s: s.git_branch.lower()),
-    ColumnDef("status",
-              cell=lambda s: styled_status(s.status, s.last_activity),
-              sort_key=lambda s: s.status.lower()),
-    ColumnDef("model",
-              cell=lambda s: friendly_model_name(s.model),
-              sort_key=lambda s: s.model.lower()),
-    ColumnDef("ctx_pct", header="Ctx%",
-              cell=lambda s: f"{s.context_tokens * 100 // CONTEXT_WINDOW}%" if s.context_tokens else "",
-              reverse_sort=True, sort_key=lambda s: s.context_tokens),
-    ColumnDef("tokens",
-              cell=lambda s: format_tokens(s.context_tokens),
-              reverse_sort=True, sort_key=lambda s: s.context_tokens),
-    ColumnDef("tools",
-              cell=lambda s: str(s.tool_count) if s.tool_count else "",
-              reverse_sort=True, sort_key=lambda s: s.tool_count),
-    ColumnDef("files",
-              cell=lambda s: str(len(s.files_edited)) if s.files_edited else "",
-              reverse_sort=True, sort_key=lambda s: len(s.files_edited) if s.files_edited else 0),
-    ColumnDef("agents",
-              cell=lambda s: str(s.running_agents) if s.running_agents else "",
-              reverse_sort=True, sort_key=lambda s: s.running_agents),
-    ColumnDef("errors",
-              cell=lambda s: Text(str(s.error_count), style="red") if s.error_count else "",
-              reverse_sort=True, sort_key=lambda s: s.error_count),
-    ColumnDef("turns",
-              cell=lambda s: str(s.turns) if s.turns else "",
-              reverse_sort=True, sort_key=lambda s: s.turns),
-    ColumnDef("stop_reason", header="StopRsn",
-              cell=lambda s: format_stop_reason(s.stop_reason),
-              sort_key=lambda s: s.stop_reason.lower()),
-    ColumnDef("duration",
-              cell=lambda s: format_duration(s.started_at),
-              reverse_sort=True, sort_key=lambda s: s.started_at or ""),
-    ColumnDef("started",
-              cell=lambda s: format_start_time(s.started_at),
-              reverse_sort=True, sort_key=lambda s: s.started_at or ""),
-    ColumnDef("activity",
-              cell=lambda s: format_relative_time(s.last_activity),
-              reverse_sort=True, sort_key=lambda s: s.last_activity or ""),
+    ColumnDef(
+        "slug",
+        header="Name",
+        cell=lambda s: (
+            Text.assemble(("● ", "#e0af68"), s.custom_title)
+            if s.custom_title
+            else Text.assemble(("○ ", "dim"), s.session_id[:8])
+        ),
+        sort_key=lambda s: (s.custom_title or s.slug or s.session_id).lower(),
+    ),
+    ColumnDef(
+        "project",
+        cell=lambda s: s.project_name or (os.path.basename(s.cwd) if s.cwd else ""),
+        sort_key=lambda s: (
+            s.project_name or os.path.basename(s.cwd) if s.cwd else ""
+        ).lower(),
+    ),
+    ColumnDef(
+        "branch",
+        cell=lambda s: s.git_branch[:20],
+        sort_key=lambda s: s.git_branch.lower(),
+    ),
+    ColumnDef(
+        "status",
+        cell=lambda s: styled_status(s.status, s.last_activity),
+        sort_key=lambda s: s.status.lower(),
+    ),
+    ColumnDef(
+        "model",
+        cell=lambda s: friendly_model_name(s.model),
+        sort_key=lambda s: s.model.lower(),
+    ),
+    ColumnDef(
+        "ctx_pct",
+        header="Ctx%",
+        cell=lambda s: f"{s.context_tokens * 100 // CONTEXT_WINDOW}%"
+        if s.context_tokens
+        else "",
+        reverse_sort=True,
+        sort_key=lambda s: s.context_tokens,
+    ),
+    ColumnDef(
+        "tokens",
+        cell=lambda s: format_tokens(s.context_tokens),
+        reverse_sort=True,
+        sort_key=lambda s: s.context_tokens,
+    ),
+    ColumnDef(
+        "tools",
+        cell=lambda s: str(s.tool_count) if s.tool_count else "",
+        reverse_sort=True,
+        sort_key=lambda s: s.tool_count,
+    ),
+    ColumnDef(
+        "files",
+        cell=lambda s: str(len(s.files_edited)) if s.files_edited else "",
+        reverse_sort=True,
+        sort_key=lambda s: len(s.files_edited) if s.files_edited else 0,
+    ),
+    ColumnDef(
+        "agents",
+        cell=lambda s: str(s.running_agents) if s.running_agents else "",
+        reverse_sort=True,
+        sort_key=lambda s: s.running_agents,
+    ),
+    ColumnDef(
+        "errors",
+        cell=lambda s: Text(str(s.error_count), style="red") if s.error_count else "",
+        reverse_sort=True,
+        sort_key=lambda s: s.error_count,
+    ),
+    ColumnDef(
+        "turns",
+        cell=lambda s: str(s.turns) if s.turns else "",
+        reverse_sort=True,
+        sort_key=lambda s: s.turns,
+    ),
+    ColumnDef(
+        "stop_reason",
+        header="StopRsn",
+        cell=lambda s: format_stop_reason(s.stop_reason),
+        sort_key=lambda s: s.stop_reason.lower(),
+    ),
+    ColumnDef(
+        "duration",
+        cell=lambda s: format_duration(s.started_at),
+        reverse_sort=True,
+        sort_key=lambda s: s.started_at or "",
+    ),
+    ColumnDef(
+        "started",
+        cell=lambda s: format_start_time(s.started_at),
+        reverse_sort=True,
+        sort_key=lambda s: s.started_at or "",
+    ),
+    ColumnDef(
+        "activity",
+        cell=lambda s: format_relative_time(s.last_activity),
+        reverse_sort=True,
+        sort_key=lambda s: s.last_activity or "",
+    ),
 )
 
 _COLUMN_BY_KEY: dict[str, ColumnDef] = {c.key: c for c in COLUMNS}
@@ -383,7 +438,9 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         cumulative_input_tokens=poller.get("cumulative_input_tokens", 0),
         cumulative_output_tokens=poller.get("cumulative_output_tokens", 0),
         cumulative_cache_read_tokens=poller.get("cumulative_cache_read_tokens", 0),
-        cumulative_cache_creation_tokens=poller.get("cumulative_cache_creation_tokens", 0),
+        cumulative_cache_creation_tokens=poller.get(
+            "cumulative_cache_creation_tokens", 0
+        ),
         subagent_input_tokens=poller.get("subagent_input_tokens", 0),
         subagent_output_tokens=poller.get("subagent_output_tokens", 0),
         subagent_cache_read_tokens=poller.get("subagent_cache_read_tokens", 0),
@@ -492,7 +549,9 @@ def _run_ps() -> str | None:
     try:
         result = subprocess.run(
             ["ps", "-eo", "pid,command"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return result.stdout
     except (OSError, subprocess.TimeoutExpired):
@@ -533,15 +592,20 @@ def get_claude_pids() -> set[int]:
     return pids
 
 
-def _find_stale_session_ids(sessions: list[SessionInfo], live_pids: set[int]) -> list[str]:
+def _find_stale_session_ids(
+    sessions: list[SessionInfo], live_pids: set[int]
+) -> list[str]:
     """Return session IDs whose PID is known but no longer running."""
     return [
-        s.session_id for s in sessions
+        s.session_id
+        for s in sessions
         if s.pid is not None and s.pid > 0 and s.pid not in live_pids
     ]
 
 
-def check_session_health(sessions: list[SessionInfo], claude_pids: set[int]) -> HealthStatus:
+def check_session_health(
+    sessions: list[SessionInfo], claude_pids: set[int]
+) -> HealthStatus:
     """Compare tracked sessions against live Claude processes."""
     stale_ids = _find_stale_session_ids(sessions, claude_pids)
     live_tracked = len(sessions) - len(stale_ids)
@@ -681,7 +745,6 @@ class ConfirmKillScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
-
 # --- DataTable subclass for column indicator ---
 
 
@@ -711,11 +774,17 @@ class _CctopTable(DataTable):
         cell_row, cell_col = target_cell
         return cell_row == -1 and cell_col == self.selected_column
 
-    def _render_line_in_row(self, row_key, line_no, base_style, cursor_location, hover_location):
+    def _render_line_in_row(
+        self, row_key, line_no, base_style, cursor_location, hover_location
+    ):
         if row_key is self._header_row_key:
             cursor_location = Coordinate(cursor_location[0], self.selected_column)
         return super()._render_line_in_row(
-            row_key, line_no, base_style, cursor_location, hover_location,
+            row_key,
+            line_no,
+            base_style,
+            cursor_location,
+            hover_location,
         )
 
     def watch_selected_column(self, old_value: int, new_value: int) -> None:
@@ -903,11 +972,15 @@ class SessionsDashboard(App):
 
     def action_show_columns(self) -> None:
         """Open the column picker to toggle column visibility."""
+
         def _on_dismiss(result: set | None) -> None:
             if result is not None:
                 self._hidden_columns = result
                 self._apply_column_visibility()
-        self.push_screen(ColumnPicker(COLUMNS, self._hidden_columns), callback=_on_dismiss)
+
+        self.push_screen(
+            ColumnPicker(COLUMNS, self._hidden_columns), callback=_on_dismiss
+        )
 
     def action_show_all_columns(self) -> None:
         """Show all columns (reset hidden set)."""
@@ -943,9 +1016,13 @@ class SessionsDashboard(App):
             os.kill(pid, signal.SIGTERM)
             self.call_from_thread(self.notify, f"Sent SIGTERM to {name} (pid {pid})")
         except ProcessLookupError:
-            self.call_from_thread(self.notify, f"Process {pid} already exited", severity="warning")
+            self.call_from_thread(
+                self.notify, f"Process {pid} already exited", severity="warning"
+            )
         except PermissionError:
-            self.call_from_thread(self.notify, f"Permission denied killing pid {pid}", severity="error")
+            self.call_from_thread(
+                self.notify, f"Permission denied killing pid {pid}", severity="error"
+            )
         except OSError as exc:
             self.call_from_thread(self.notify, f"Kill failed: {exc}", severity="error")
         self.call_from_thread(self._schedule_refresh)
@@ -958,7 +1035,13 @@ class SessionsDashboard(App):
         """
         try:
             result = subprocess.run(
-                ["tmux", "list-panes", "-a", "-F", "#{pane_pid} #{session_name}:#{window_index}"],
+                [
+                    "tmux",
+                    "list-panes",
+                    "-a",
+                    "-F",
+                    "#{pane_pid} #{session_name}:#{window_index}",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=1,
@@ -978,6 +1061,23 @@ class SessionsDashboard(App):
             return None
         except (OSError, subprocess.TimeoutExpired):
             return None
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Check if actions are available based on selected session."""
+        if action == "tmux_attach":
+            table = self.query_one(DataTable)
+            if table.row_count == 0:
+                return None
+            try:
+                row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+                session = self._find_session(row_key)
+                if session is None:
+                    return None
+                # Show binding only if session has tmux metadata (non-empty string)
+                return session.tmux_session != ""
+            except Exception:
+                return None
+        return True
 
     def action_tmux_attach(self) -> None:
         """Attach to the tmux session & window where this Claude Code session is running."""
@@ -1075,7 +1175,9 @@ class SessionsDashboard(App):
             health = check_session_health(sessions, pids)
         self.call_from_thread(self._apply_refresh, sessions, health)
 
-    def _apply_refresh(self, sessions: list[SessionInfo], health: HealthStatus | None) -> None:
+    def _apply_refresh(
+        self, sessions: list[SessionInfo], health: HealthStatus | None
+    ) -> None:
         """Main thread: update state and UI with results from the worker."""
         self._sessions = sessions
         if health is not None:
@@ -1121,7 +1223,9 @@ class SessionsDashboard(App):
         sort_fn = col_def.sort_key or (lambda s: s.last_activity or "")
         return sorted(self._sessions, key=sort_fn, reverse=self.sort_reverse)
 
-    def _patch_table_cells(self, ordered: list[SessionInfo], vis: tuple[ColumnDef, ...]) -> None:
+    def _patch_table_cells(
+        self, ordered: list[SessionInfo], vis: tuple[ColumnDef, ...]
+    ) -> None:
         """Update cell values in place without rebuilding the table."""
         table = self.query_one(_CctopTable)
         for s in ordered:
@@ -1129,7 +1233,9 @@ class SessionsDashboard(App):
             for col_key, value in zip(self._column_keys, cells):
                 table.update_cell(s.session_id, col_key, value)
 
-    def _rebuild_table(self, ordered: list[SessionInfo], vis: tuple[ColumnDef, ...]) -> None:
+    def _rebuild_table(
+        self, ordered: list[SessionInfo], vis: tuple[ColumnDef, ...]
+    ) -> None:
         """Clear and rebuild all rows, preserving cursor position."""
         table = self.query_one(_CctopTable)
         saved_key = self._save_cursor(table)
@@ -1178,23 +1284,35 @@ class SessionsDashboard(App):
     def _detail_header(s: SessionInfo) -> str:
         """Build the markup header line: path, branch, tokens."""
         tokens = format_tokens(s.context_tokens)
-        return "".join(p for p in (
-            f"[bold]{s.cwd or '?'}[/bold]",
-            f"  [cyan]{s.git_branch}[/cyan]" if s.git_branch else None,
-            f"  [dim]Tokens: {tokens}[/dim]" if tokens else None,
-        ) if p is not None)
+        return "".join(
+            p
+            for p in (
+                f"[bold]{s.cwd or '?'}[/bold]",
+                f"  [cyan]{s.git_branch}[/cyan]" if s.git_branch else None,
+                f"  [dim]Tokens: {tokens}[/dim]" if tokens else None,
+            )
+            if p is not None
+        )
 
     @staticmethod
     def _detail_meta(s: SessionInfo) -> list[str]:
         """Build metadata chips for the detail panel."""
         n_files = len(s.files_edited) if s.files_edited else 0
-        return [p for p in (
-            f"Model: {s.model}" if s.model else None,
-            f"{_plural(n_files, 'file')} edited" if n_files else None,
-            _plural(s.subagent_count, "subagent") if s.subagent_count else None,
-            f"[red]{_plural(s.error_count, 'error')}[/red]" if s.error_count else None,
-            f"stop: {s.stop_reason}" if s.stop_reason and s.stop_reason != "end_turn" else None,
-        ) if p is not None]
+        return [
+            p
+            for p in (
+                f"Model: {s.model}" if s.model else None,
+                f"{_plural(n_files, 'file')} edited" if n_files else None,
+                _plural(s.subagent_count, "subagent") if s.subagent_count else None,
+                f"[red]{_plural(s.error_count, 'error')}[/red]"
+                if s.error_count
+                else None,
+                f"stop: {s.stop_reason}"
+                if s.stop_reason and s.stop_reason != "end_turn"
+                else None,
+            )
+            if p is not None
+        ]
 
     def _find_session(self, row_key) -> SessionInfo | None:
         """Look up a session by its table row key."""
@@ -1224,6 +1342,9 @@ class SessionsDashboard(App):
             detail.update("")
             return
         detail.update(self._build_detail(session))
+        # Refresh footer to update binding visibility based on new selection
+        self.refresh_bindings()
+
 
 if __name__ == "__main__":
     if "--reset" in sys.argv:
