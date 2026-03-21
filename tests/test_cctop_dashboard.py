@@ -943,10 +943,12 @@ async def test_tmux_attach_binding_visible_with_metadata(fake_status_dir):
     hook_path.write_text(json.dumps(hook))
 
     app = SessionsDashboard()
-    async with app.run_test() as pilot:
-        await _wait_for_rows(pilot, app)
-        result = app.check_action("tmux_attach", ())
-        assert result is True
+    # Set TMUX env var to simulate running inside tmux
+    with patch.dict(os.environ, {"TMUX": "/tmp/tmux-1000/default,12345,0"}):
+        async with app.run_test() as pilot:
+            await _wait_for_rows(pilot, app)
+            result = app.check_action("tmux_attach", ())
+            assert result is True
 
 
 @pytest.mark.asyncio
@@ -954,10 +956,12 @@ async def test_tmux_attach_binding_hidden_without_metadata(fake_status_dir):
     """Tmux attach binding should be hidden for sessions without tmux metadata."""
     write_fake_session(fake_status_dir, "no-tmux", pid=12345)
     app = SessionsDashboard()
-    async with app.run_test() as pilot:
-        await _wait_for_rows(pilot, app)
-        result = app.check_action("tmux_attach", ())
-        assert result is None
+    # Set TMUX env var but session has no tmux metadata
+    with patch.dict(os.environ, {"TMUX": "/tmp/tmux-1000/default,12345,0"}):
+        async with app.run_test() as pilot:
+            await _wait_for_rows(pilot, app)
+            result = app.check_action("tmux_attach", ())
+            assert result is None
 
 
 @pytest.mark.asyncio
@@ -973,18 +977,41 @@ async def test_tmux_attach_binding_updates_on_navigation(fake_status_dir):
     write_fake_session(fake_status_dir, "without-tmux", pid=54321)
 
     app = SessionsDashboard()
-    async with app.run_test() as pilot:
-        await _wait_for_rows(pilot, app, expected=2)
+    # Set TMUX env var to simulate running inside tmux
+    with patch.dict(os.environ, {"TMUX": "/tmp/tmux-1000/default,12345,0"}):
+        async with app.run_test() as pilot:
+            await _wait_for_rows(pilot, app, expected=2)
 
-        # Check first row
-        first_check = app.check_action("tmux_attach", ())
+            # Check first row
+            first_check = app.check_action("tmux_attach", ())
 
-        # Move to second row
-        await pilot.press("down")
-        await pilot.pause()
+            # Move to second row
+            await pilot.press("down")
+            await pilot.pause()
 
-        second_check = app.check_action("tmux_attach", ())
+            second_check = app.check_action("tmux_attach", ())
 
-        # One should be True, one should be None (order may vary by sort)
-        checks = {first_check, second_check}
-        assert True in checks and None in checks
+            # One should be True, one should be None (order may vary by sort)
+            checks = {first_check, second_check}
+            assert True in checks and None in checks
+
+
+@pytest.mark.asyncio
+async def test_tmux_attach_binding_hidden_when_not_in_tmux(fake_status_dir):
+    """Tmux attach binding should be hidden when cctop is not running in tmux."""
+    write_fake_session(fake_status_dir, "tmux-sess", pid=12345)
+    hook_path = fake_status_dir / "tmux-sess.json"
+    hook = json.loads(hook_path.read_text())
+    hook["tmux_session"] = "my-session"
+    hook["tmux_window"] = "0"
+    hook_path.write_text(json.dumps(hook))
+
+    app = SessionsDashboard()
+    # Ensure TMUX env var is not set
+    with patch.dict(os.environ, {}, clear=False):
+        if "TMUX" in os.environ:
+            del os.environ["TMUX"]
+        async with app.run_test() as pilot:
+            await _wait_for_rows(pilot, app)
+            result = app.check_action("tmux_attach", ())
+            assert result is None
