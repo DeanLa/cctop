@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "plugin" / "scri
 from cctop_dashboard import (
     SessionsDashboard,
     SessionInfo,
-    SortPicker,
+    ColumnPicker,
     HealthStatus,
     _render_message,
     format_tokens,
@@ -278,29 +278,108 @@ async def test_sessions_render(fake_status_dir):
 
 
 @pytest.mark.asyncio
-async def test_sort_popup_opens(fake_status_dir):
-    """Pressing 's' should push SortPicker as active screen."""
+async def test_column_move_left_right(fake_status_dir):
+    """Left/right should move the selected column on the table."""
+    write_fake_session(fake_status_dir, "aaaa-1111")
     app = SessionsDashboard()
     async with app.run_test() as pilot:
-        await pilot.press("s")
+        await _wait_for_rows(pilot, app)
+        table = app.query_one(DataTable)
+        assert table.selected_column == 0
+        await pilot.press("right")
         await pilot.pause()
-        assert isinstance(app.screen, SortPicker)
+        assert table.selected_column == 1
+        await pilot.press("right")
+        await pilot.pause()
+        assert table.selected_column == 2
+        await pilot.press("left")
+        await pilot.pause()
+        assert table.selected_column == 1
 
 
 @pytest.mark.asyncio
-async def test_sort_changes(fake_status_dir):
-    """Selecting 'turns' in sort picker updates sort_mode."""
-    write_fake_session(fake_status_dir, "aaaa-1111", turns=3)
+async def test_sort_by_active_column(fake_status_dir):
+    """Pressing 's' should sort by the active column."""
+    write_fake_session(fake_status_dir, "aaaa-1111")
     app = SessionsDashboard()
     async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        # Move to the "status" column (index 3) and sort
+        for _ in range(3):
+            await pilot.press("right")
+        await pilot.pause()
         await pilot.press("s")
         await pilot.pause()
-        # Navigate to "Turns" (index 4) and select
-        option_list = app.screen.query_one("#sort-list")
-        option_list.highlighted = 4  # "Turns"
-        await pilot.press("enter")
+        assert app.sort_mode == "status"
+
+
+@pytest.mark.asyncio
+async def test_hide_column(fake_status_dir):
+    """Pressing 'h' should hide the active column."""
+    write_fake_session(fake_status_dir, "aaaa-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        table = app.query_one(DataTable)
+        assert len(table.columns) == 16
+        await pilot.press("h")
         await pilot.pause()
-        assert app.sort_mode == "turns"
+        assert len(table.columns) == 15
+
+
+@pytest.mark.asyncio
+async def test_show_all_columns(fake_status_dir):
+    """Pressing 'C' should restore all hidden columns."""
+    write_fake_session(fake_status_dir, "aaaa-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        table = app.query_one(DataTable)
+        await pilot.press("h")
+        await pilot.pause()
+        assert len(table.columns) == 15
+        await pilot.press("C")
+        await pilot.pause()
+        assert len(table.columns) == 16
+
+
+@pytest.mark.asyncio
+async def test_cannot_hide_last_column(fake_status_dir):
+    """Should not be able to hide the last visible column."""
+    write_fake_session(fake_status_dir, "aaaa-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        table = app.query_one(DataTable)
+        # Hide all but one column
+        for _ in range(15):
+            await pilot.press("h")
+            await pilot.pause()
+        assert len(table.columns) == 1
+        # Try to hide the last one
+        await pilot.press("h")
+        await pilot.pause()
+        assert len(table.columns) == 1
+
+
+@pytest.mark.asyncio
+async def test_sort_resets_when_sorted_column_hidden(fake_status_dir):
+    """Sort should reset when the sorted column is hidden."""
+    write_fake_session(fake_status_dir, "aaaa-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        # Move to status (index 3) and sort by it
+        for _ in range(3):
+            await pilot.press("right")
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert app.sort_mode == "status"
+        # Now hide it
+        await pilot.press("h")
+        await pilot.pause()
+        assert app.sort_mode != "status"
 
 
 @pytest.mark.asyncio
