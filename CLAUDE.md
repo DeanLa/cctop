@@ -99,14 +99,19 @@ Before committing, run a basic security audit on staged changes:
 
 ## PR Groups Workflow (MANDATORY)
 
-This project uses a structured PR-groups workflow defined in `plans/pr-groups.md`. **This workflow is not optional.** When asked to work on a PR group or backlog items:
+This project uses a structured PR-groups workflow defined in `plans/pr-groups.md`. **This workflow is not optional.**
 
+**Shorthand commands:**
+- **"Implement/work PR X"** — Look up PR group X in `plans/pr-groups.md`, implement all its items following the full workflow below
+- **"Implement/work Task/T #"** — Implement only that single backlog item, but still follow the full PR workflow (worktree → plan → implement → test → push & PR)
+
+**Workflow steps:**
 1. Read `plans/pr-groups.md` first to understand the grouping and dependencies
 2. Follow the workflow steps exactly as written in that file (branch → plan → implement → test → push & PR)
 3. Use `EnterWorktree` to create the worktree, do not skip this step
 4. Enter plan mode before implementing, get user approval before writing code
 5. Make granular commits (one per logical change)
-6. After merge, update both `BACKLOG.md` (mark items done, commit+push) and `plans/pr-groups.md` (check off the PR group, local only, do NOT git add)
+6. After merge, update `BACKLOG.md` (mark items done) and `plans/pr-groups.md` (check off the PR group), but do NOT commit or push these changes, the user will review and commit manually
 
 ## Project-Level Files (BACKLOG.md, CLAUDE.md)
 

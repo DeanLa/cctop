@@ -4,60 +4,62 @@ Items tagged with `PR-X` are assigned to a PR group, see [plans/pr-groups.md](pl
 When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
 ## Table & Columns
-- [x] **1.** Add `Files` column (count of files edited) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
-- [x] **2.** Add `Agents` column (subagent count) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
-- [x] **3.** Add `Errors` column (error count) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
-- [x] **4.** Add `StopRsn` column ("done", "tool", "limit") `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
-- [x] **5.** ~~Sparkline per session showing tool activity over time~~ — scrapped, not useful
 - [ ] **6.** Group/collapse sessions by project directory `PR-M`
-- [x] **7.** Show full model name in `Model` column (e.g. `claude-sonnet-4-6` instead of truncated) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
-- [x] **8.** Add `Started` column showing session start time `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
-- [x] **9.** Fix `Turns` count, count user messages instead of tool calls (a turn is a user-assistant exchange, not every tool invocation) `PR-C` — [#1](https://github.com/DeanLa/cctop/pull/1)
+- [ ] **41.** Rename `slug` column to `Name`, the internal field is called `slug` (short directory name) but the user-facing column label should be `Name` since it shows the session's display name (custom title or slug)
 
 ## Detail Panel
-- [x] **10.** The user message is not formatted markdown like the assistant message, make them consistent `PR-B` — [#2](https://github.com/DeanLa/cctop/pull/2)
-- [x] **11.** DRY message rendering: both user and assistant messages go through shared `_render_message` helper `PR-B` — [#2](https://github.com/DeanLa/cctop/pull/2)
-- [x] **12.** Increase assistant message lines from 4 to 5
-- [x] **13.** Wrap detail panel text at window width (with margin) instead of fixed 100 chars
 - [ ] **14.** Parse system-injected user messages (e.g. `<task-notification>`) and display them nicely, show "Subagent completed: <summary>" instead of hiding them entirely `PR-H`
-- [x] **15.** Bug: detail panel still shows last selected session after all sessions end, should clear when no active sessions remain `PR-B` — [#2](https://github.com/DeanLa/cctop/pull/2)
 - [ ] **34.** Recent activity log: timestamped feed of recent events (tool calls, messages) for the selected session
 - [ ] **35.** Session metadata section: display relevant metadata from the session-status JSON
 
-## Debugging
-- [x] **16.** Debug mode, log all hook events with full JSON stdin to a file for troubleshooting `PR-D` — [#12](https://github.com/DeanLa/cctop/pull/12)
-
 ## Session Actions
-- [x] **17.** Investigate: can we kill a session from the dashboard? `PR-F` — [#14](https://github.com/DeanLa/cctop/pull/14)
-- [ ] **18.** Add rename session action from the dashboard, see [`plans/rename-session-externally.md`](plans/rename-session-externally.md) — blocked: running sessions don't pick up external title changes
-- [x] **19.** Strong refresh: keybinding (e.g. Shift+R) and CLI flag (`cctop --reset`) that wipes `~/.cctop/`, re-scans all sessions from scratch
+- [ ] **18.** Add rename session action from the dashboard, see [`plans/rename-session-externally.md`](plans/rename-session-externally.md) — blocked: running sessions don't pick up external title changes *(was PR-F, deferred)*
 
 ## Session Lifecycle
-- [x] **20.** Increase stale threshold beyond 5 minutes — PR-E (#3)
-- [x] **21.** Stale session cleanup via PID check instead of timeout heuristics
 - [ ] **22.** Session history, persist ended session stats (tokens, cost, turns, duration) for later querying `PR-I`
-- [x] **23.** Fix branch showing "HEAD" for sessions in detached HEAD state, resolve to a meaningful name (tag, short SHA, or parent branch) — PR-E (#3)
 
 ## UI & Theming
 - [ ] **24.** Persist selected theme to disk so it survives restarts (config file) `PR-J`
 - [ ] **36.** Config file in `~/.cctop/` for settings like stale threshold, theme, sort behavior, etc.
-- [ ] **37.** Column selection & sort/hide (left/right to select column, s to sort, h to hide, c for column picker, C to show all)
 - [ ] **40.** Group-by view: group rows by a column (e.g. project, model, status) with collapsible section headers
-
-## Packaging & Distribution
-- [x] **25.** Rename package to `cctop`, plugin name, slash command, and callable as `cctop` from terminal
-- [x] **26.** Create `~/bin/cctop` CLI entry point
-- [x] **27.** Create a git repo and push to GitHub
-- [x] **38.** Support versioning: plugin and CLI app should share the same version, tag releases in git
-- [x] **39.** Maintain a `CHANGELOG.md` with entries for each release, generated from commit messages or PR descriptions, maintained by Claude automatically
-
-## Commands
-- [x] **29.** `/register` slash command, if the current session is not tracked by cctop (e.g. plugin was installed after the session started, or a bug), manually register it by writing the session JSON into `~/.cctop/` so the poller picks it up. `PR-G`
+- [ ] **42.** Configurable column display order: allow users to reorder columns via config (depends on #36)
+- [ ] **43.** Default sort column in config: set which column the table sorts by on startup (depends on #36)
+- [ ] **44.** Persist hidden columns in config: save column visibility state across restarts so hidden columns stay hidden (depends on #36)
+- [ ] **45.** Default visible columns in config: define which columns are shown by default, so new columns start hidden unless opted in (depends on #36)
 
 ## Health Check & Teammates
-- [x] **30.** Session health check warning: periodically compare `ps`-based Claude process count against cctop tracked sessions, show orange warning bar on mismatch. `cctop > grep` = stale (crashed) sessions, `grep > cctop` = undetected sessions. Validate PIDs to distinguish. See [`plans/prd-session-health-check.md`](plans/prd-session-health-check.md) `PR-K` — [#6](https://github.com/DeanLa/cctop/pull/6)
 - [ ] **31.** Teammate detection & grouping: parse `--parent-session-id` from tmux-spawned teammate processes, group under parent session, add `Team` column showing teammate count. Exclude teammates from health check counts. See [`plans/prd-session-health-check.md`](plans/prd-session-health-check.md) `PR-K`
 - [ ] **32.** Teammate drill-down: expandable rows for sessions with teammates, show agent name, color, status per teammate in indented sub-rows. See [`plans/prd-session-health-check.md`](plans/prd-session-health-check.md) `PR-K`
 
 ## New Frontiers
 - [ ] **33.** Web frontend (Flask/FastAPI serving session-status JSON) *(standalone)*
+
+## Done
+- [x] **1.** Add `Files` column (count of files edited) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
+- [x] **2.** Add `Agents` column (subagent count) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
+- [x] **3.** Add `Errors` column (error count) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
+- [x] **4.** Add `StopRsn` column ("done", "tool", "limit") `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
+- [x] **5.** ~~Sparkline per session showing tool activity over time~~ — scrapped, not useful
+- [x] **7.** Show full model name in `Model` column (e.g. `claude-sonnet-4-6` instead of truncated) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
+- [x] **8.** Add `Started` column showing session start time `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
+- [x] **9.** Fix `Turns` count, count user messages instead of tool calls (a turn is a user-assistant exchange, not every tool invocation) `PR-C` — [#1](https://github.com/DeanLa/cctop/pull/1)
+- [x] **10.** The user message is not formatted markdown like the assistant message, make them consistent `PR-B` — [#2](https://github.com/DeanLa/cctop/pull/2)
+- [x] **11.** DRY message rendering: both user and assistant messages go through shared `_render_message` helper `PR-B` — [#2](https://github.com/DeanLa/cctop/pull/2)
+- [x] **12.** Increase assistant message lines from 4 to 5
+- [x] **13.** Wrap detail panel text at window width (with margin) instead of fixed 100 chars
+- [x] **15.** Bug: detail panel still shows last selected session after all sessions end, should clear when no active sessions remain `PR-B` — [#2](https://github.com/DeanLa/cctop/pull/2)
+- [x] **16.** Debug mode, log all hook events with full JSON stdin to a file for troubleshooting `PR-D` — [#12](https://github.com/DeanLa/cctop/pull/12)
+- [x] **17.** Investigate: can we kill a session from the dashboard? `PR-F` — [#14](https://github.com/DeanLa/cctop/pull/14)
+- [x] **19.** Strong refresh: keybinding (e.g. Shift+R) and CLI flag (`cctop --reset`) that wipes `~/.cctop/`, re-scans all sessions from scratch
+- [x] **20.** Increase stale threshold beyond 5 minutes — PR-E (#3)
+- [x] **21.** Stale session cleanup via PID check instead of timeout heuristics
+- [x] **23.** Fix branch showing "HEAD" for sessions in detached HEAD state, resolve to a meaningful name (tag, short SHA, or parent branch) — PR-E (#3)
+- [x] **25.** Rename package to `cctop`, plugin name, slash command, and callable as `cctop` from terminal
+- [x] **26.** Create `~/bin/cctop` CLI entry point
+- [x] **27.** Create a git repo and push to GitHub
+- [x] **29.** `/register` slash command, if the current session is not tracked by cctop (e.g. plugin was installed after the session started, or a bug), manually register it by writing the session JSON into `~/.cctop/` so the poller picks it up. `PR-G`
+- [x] **30.** Session health check warning: periodically compare `ps`-based Claude process count against cctop tracked sessions, show orange warning bar on mismatch. `cctop > grep` = stale (crashed) sessions, `grep > cctop` = undetected sessions. Validate PIDs to distinguish. See [`plans/prd-session-health-check.md`](plans/prd-session-health-check.md) `PR-K` — [#6](https://github.com/DeanLa/cctop/pull/6)
+- [x] **38.** Support versioning: plugin and CLI app should share the same version, tag releases in git
+- [x] **37.** Column selection & sort/hide (left/right to select column, s to sort, h to hide, c for column picker, C to show all) — [#17](https://github.com/DeanLa/cctop/pull/17)
+- [x] **38.** Support versioning: plugin and CLI app should share the same version, tag releases in git
+- [x] **39.** Maintain a `CHANGELOG.md` with entries for each release, generated from commit messages or PR descriptions, maintained by Claude automatically
