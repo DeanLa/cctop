@@ -772,8 +772,8 @@ class SessionsDashboard(App):
         Binding("h", "hide_column", "Hide col"),
         Binding("c", "show_columns", "Columns"),
         Binding("C", "show_all_columns", "Show all"),
-        Binding("a", "tmux_attach", "Tmux Attach"),
         Binding("k", "kill_session", "Kill"),
+        Binding("a", "tmux_attach", "Tmux Attach"),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
