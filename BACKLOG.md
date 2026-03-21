@@ -8,7 +8,7 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [x] **2.** Add `Agents` column (subagent count) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
 - [x] **3.** Add `Errors` column (error count) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
 - [x] **4.** Add `StopRsn` column ("done", "tool", "limit") `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
-- [ ] **5.** Sparkline per session showing tool activity over time `PR-L`
+- [x] **5.** ~~Sparkline per session showing tool activity over time~~ — scrapped, not useful
 - [ ] **6.** Group/collapse sessions by project directory `PR-M`
 - [x] **7.** Show full model name in `Model` column (e.g. `claude-sonnet-4-6` instead of truncated) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
 - [x] **8.** Add `Started` column showing session start time `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
@@ -41,7 +41,8 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 ## UI & Theming
 - [ ] **24.** Persist selected theme to disk so it survives restarts (config file) `PR-J`
 - [ ] **36.** Config file in `~/.cctop/` for settings like stale threshold, theme, sort behavior, etc.
-- [ ] **37.** Group columns by functionality (like sort behavior), make column groups togglable or reorderable
+- [ ] **37.** Column selection & sort/hide (left/right to select column, s to sort, h to hide, c for column picker, C to show all)
+- [ ] **40.** Group-by view: group rows by a column (e.g. project, model, status) with collapsible section headers
 
 ## Packaging & Distribution
 - [x] **25.** Rename package to `cctop`, plugin name, slash command, and callable as `cctop` from terminal
