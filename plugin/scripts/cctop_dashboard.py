@@ -602,6 +602,53 @@ class SortPicker(ModalScreen[str]):
         self.dismiss("")
 
 
+class ConfirmKill(ModalScreen[bool]):
+    """Modal confirmation dialog for killing tmux window."""
+
+    CSS = """
+    ConfirmKill {
+        align: center middle;
+    }
+    #confirm-dialog {
+        width: 50;
+        height: auto;
+        background: $surface;
+        border: tall $error;
+        padding: 1 2;
+    }
+    """
+
+    BINDINGS = [
+        Binding("y", "confirm", "Yes", show=True),
+        Binding("n", "cancel", "No", show=True),
+        Binding("escape", "cancel", "Cancel", show=False),
+    ]
+
+    def __init__(self, target: str) -> None:
+        super().__init__()
+        self.target = target
+
+    def compose(self) -> ComposeResult:
+        from rich.text import Text
+        text = Text()
+        text.append(f"Kill tmux window '{self.target}'?\n\n")
+        text.append("This will terminate the Claude session.\n\n")
+        text.append("Press ", style="dim")
+        text.append("y", style="bold green")
+        text.append(" to confirm, ", style="dim")
+        text.append("n", style="bold red")
+        text.append(" to cancel", style="dim")
+
+        widget = Static(text, id="confirm-dialog")
+        yield widget
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
 # --- Textual App ---
 
 
@@ -642,7 +689,8 @@ class SessionsDashboard(App):
         Binding("r", "force_refresh", "Refresh"),
         Binding("R", "purge_dead", "Purge dead"),
         Binding("s", "open_sort", "Sort"),
-        Binding("a", "tmux_attach", "Attach"),
+        Binding("a", "tmux_attach", "Tmux Attach"),
+        Binding("k", "tmux_kill", "Tmux Kill"),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
@@ -778,7 +826,87 @@ class SessionsDashboard(App):
                     pass  # Continue to error handling
 
         # Both methods failed
-        self.notify("Tmux target not found (session may have ended)", severity="warning")
+        self.notify("Tmux window not found", severity="warning")
+
+    def action_tmux_kill(self) -> None:
+        """Kill the tmux window where this Claude Code session is running."""
+        table = self.query_one(DataTable)
+        if table.row_count == 0:
+            self.notify("No sessions available", severity="warning")
+            return
+
+        try:
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+        except Exception:
+            self.notify("No session selected", severity="warning")
+            return
+
+        session = self._find_session(row_key)
+        if session is None:
+            self.notify("No session selected", severity="warning")
+            return
+
+        if not session.tmux_session and not session.pid:
+            self.notify("Session not running in tmux", severity="warning")
+            return
+
+        # Build cached target: "session:window" if window available, else just "session"
+        target = None
+        if session.tmux_session:
+            target = session.tmux_session
+            if session.tmux_window:
+                target = f"{session.tmux_session}:{session.tmux_window}"
+
+        # Determine target for confirmation dialog
+        if not target and session.pid:
+            target = self._find_tmux_target_by_pid(session.pid)
+
+        if not target:
+            self.notify("Tmux window not found", severity="warning")
+            return
+
+        # Show confirmation dialog
+        def _on_confirm(confirmed: bool) -> None:
+            if not confirmed:
+                return
+
+            # Try cached target first (fast path)
+            if session.tmux_session:
+                cached_target = session.tmux_session
+                if session.tmux_window:
+                    cached_target = f"{session.tmux_session}:{session.tmux_window}"
+                try:
+                    subprocess.run(
+                        ["tmux", "kill-window", "-t", cached_target],
+                        timeout=2,
+                        check=True,
+                        capture_output=True,
+                    )
+                    self.notify(f"Killed tmux window {cached_target}")
+                    return  # Success!
+                except subprocess.CalledProcessError:
+                    pass  # Fall through to PID-based lookup
+
+            # Fallback: PID-based lookup (handles renamed sessions/moved windows)
+            if session.pid:
+                pid_target = self._find_tmux_target_by_pid(session.pid)
+                if pid_target:
+                    try:
+                        subprocess.run(
+                            ["tmux", "kill-window", "-t", pid_target],
+                            timeout=2,
+                            check=True,
+                            capture_output=True,
+                        )
+                        self.notify(f"Killed tmux window {pid_target}")
+                        return  # Success!
+                    except subprocess.CalledProcessError:
+                        pass  # Continue to error handling
+
+            # Both methods failed
+            self.notify("Tmux window not found", severity="warning")
+
+        self.push_screen(ConfirmKill(target), callback=_on_confirm)
 
     def watch_sort_mode(self, new_value: str) -> None:
         """Re-sort the table when sort_mode changes."""
