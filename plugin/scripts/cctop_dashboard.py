@@ -1065,6 +1065,9 @@ class SessionsDashboard(App):
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Check if actions are available based on selected session."""
         if action == "tmux_attach":
+            # Only show if cctop is running inside tmux
+            if not os.environ.get("TMUX"):
+                return None
             table = self.query_one(DataTable)
             if table.row_count == 0:
                 return None
