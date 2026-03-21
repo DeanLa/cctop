@@ -1074,7 +1074,7 @@ class SessionsDashboard(App):
                 if session is None:
                     return None
                 # Show binding only if session has tmux metadata (non-empty string)
-                return session.tmux_session != ""
+                return True if session.tmux_session != "" else None
             except Exception:
                 return None
         return True

@@ -927,3 +927,64 @@ async def test_health_bar_shows_untracked(fake_status_dir):
             assert "visible" in bar.classes
             rendered = _render_static_text(bar)
             assert "not tracked" in rendered
+
+
+# --- tmux attach tests ---
+
+
+@pytest.mark.asyncio
+async def test_tmux_attach_binding_visible_with_metadata(fake_status_dir):
+    """Tmux attach binding should be visible for sessions with tmux metadata."""
+    write_fake_session(fake_status_dir, "tmux-sess", pid=12345)
+    hook_path = fake_status_dir / "tmux-sess.json"
+    hook = json.loads(hook_path.read_text())
+    hook["tmux_session"] = "my-session"
+    hook["tmux_window"] = "0"
+    hook_path.write_text(json.dumps(hook))
+
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        result = app.check_action("tmux_attach", ())
+        assert result is True
+
+
+@pytest.mark.asyncio
+async def test_tmux_attach_binding_hidden_without_metadata(fake_status_dir):
+    """Tmux attach binding should be hidden for sessions without tmux metadata."""
+    write_fake_session(fake_status_dir, "no-tmux", pid=12345)
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        result = app.check_action("tmux_attach", ())
+        assert result is None
+
+
+@pytest.mark.asyncio
+async def test_tmux_attach_binding_updates_on_navigation(fake_status_dir):
+    """Binding visibility should update when navigating between sessions."""
+    # Session with tmux
+    write_fake_session(fake_status_dir, "with-tmux", pid=12345)
+    hook1 = json.loads((fake_status_dir / "with-tmux.json").read_text())
+    hook1["tmux_session"] = "my-session"
+    (fake_status_dir / "with-tmux.json").write_text(json.dumps(hook1))
+
+    # Session without tmux
+    write_fake_session(fake_status_dir, "without-tmux", pid=54321)
+
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=2)
+
+        # Check first row
+        first_check = app.check_action("tmux_attach", ())
+
+        # Move to second row
+        await pilot.press("down")
+        await pilot.pause()
+
+        second_check = app.check_action("tmux_attach", ())
+
+        # One should be True, one should be None (order may vary by sort)
+        checks = {first_check, second_check}
+        assert True in checks and None in checks
