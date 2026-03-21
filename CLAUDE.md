@@ -35,7 +35,7 @@ Anyone running more than one Claude Code session at a time, or anyone who wants 
 - `.claude-plugin/marketplace.json`, local marketplace manifest (points to `./plugin/`)
 - `tests/test_cctop_dashboard.py`, TUI tests
 - `install.sh`, reinstalls plugin into Claude's cache
-- `plans/`, gitignored, PRDs and design docs (never commit these)
+- `plans/`, **gitignored**, PRDs and design docs (never commit these, never `git add` them)
 - `BACKLOG.md`, numbered feature backlog with completion tracking
 
 ## Reference Docs
@@ -63,7 +63,7 @@ After editing any file under `plugin/`, you **must** reinstall:
 ./install.sh --dev
 ```
 
-**Always run `./install.sh --dev` after modifying any plugin file** (hooks, scripts, manifests). New Claude sessions will pick up the changes; existing sessions keep the old version.
+**Always run `./install.sh --dev` after modifying any plugin file** (hooks, scripts, manifests). New Claude sessions will pick up the changes; existing sessions keep the old version. **Do this before telling the user to test.** Never say "restart cctop" without installing first. "DI" is shorthand for dev install.
 
 ## Releasing
 
@@ -99,14 +99,24 @@ Before committing, run a basic security audit on staged changes:
 
 ## PR Groups Workflow (MANDATORY)
 
-This project uses a structured PR-groups workflow defined in `plans/pr-groups.md`. **This workflow is not optional.** When asked to work on a PR group or backlog items:
+This project uses a structured PR-groups workflow defined in `plans/pr-groups.md`. **This workflow is not optional.**
 
+**Shorthand commands:**
+- **"Implement/work PR X"** — Look up PR group X in `plans/pr-groups.md`, implement all its items following the full workflow below
+- **"Implement/work Task/T #"** — Implement only that single backlog item, but still follow the full PR workflow (worktree → plan → implement → test → push & PR)
+
+**Workflow steps:**
 1. Read `plans/pr-groups.md` first to understand the grouping and dependencies
 2. Follow the workflow steps exactly as written in that file (branch → plan → implement → test → push & PR)
 3. Use `EnterWorktree` to create the worktree, do not skip this step
 4. Enter plan mode before implementing, get user approval before writing code
 5. Make granular commits (one per logical change)
-6. After merge, update both `BACKLOG.md` (mark items done) and `plans/pr-groups.md` (check off the PR group)
+6. After merge, update `BACKLOG.md` (mark items done) and `plans/pr-groups.md` (check off the PR group), but do NOT commit or push these changes, the user will review and commit manually
+
+## Project-Level Files (BACKLOG.md, CLAUDE.md)
+
+- **NEVER edit `BACKLOG.md` or `CLAUDE.md` in a worktree copy.** Edit them via the main repo path (e.g. `/Users/deanl/__me/code/cctop/CLAUDE.md`), even while working in a worktree. This avoids merge conflicts when the worktree branch is merged.
+- **Do not commit changes to these files on your own.** Only update `BACKLOG.md` or `CLAUDE.md` when the user explicitly asks for it.
 
 ## Commits
 
@@ -115,4 +125,16 @@ This project uses a structured PR-groups workflow defined in `plans/pr-groups.md
 
 ## Docs Hygiene
 
-When making changes that affect user-visible behavior (new features, changed columns, new keybindings, install steps, usage), always check that `README.md`, `BACKLOG.md`, and `CONTRIBUTING.md` are updated to match.
+When making changes that affect user-visible behavior (new features, changed columns, new keybindings, install steps, usage), always check that `README.md` and `CONTRIBUTING.md` are updated to match.
+
+## Code Quality
+
+- **Simplify aggressively.** After implementing a feature, re-read the entire file looking for dead code, vestigial fields, duplicate patterns, unused defaults, and guards for impossible conditions. Budget a simplification pass after every feature.
+- **DRY is a hard rule.** Extract shared patterns even for 2 call sites.
+- **Code should read as stories.** Method ordering and naming should make the flow obvious top-to-bottom without jumping around.
+
+## UI Preferences
+
+- **High contrast, not subtle.** Prefer bold, theme-native visual indicators (accent colors, `reverse`, built-in component classes) over custom muted styles.
+- **Polish details matter.** Indicators should be where the user's eye already is. Navigation should wrap around. Modals should be wide enough for one-line instructions. Text should be centered when appropriate.
+- **Performance must match native feel.** If a UI element feels slower than Textual's native equivalent, dig into the rendering pipeline (`_should_highlight`, `_render_line_in_row`, `_refresh_region`) and replicate the same pattern. Don't settle for "good enough."

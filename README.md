@@ -41,7 +41,7 @@ cctop gives you one screen to see all of them.
 
 | Column | What it shows |
 |--------|---------------|
-| **Slug** | Session nickname (custom title or first prompt) |
+| **Name** | Session display name (custom title or directory slug) |
 | **Project** | Working directory name |
 | **Branch** | Git branch (truncated to 20 chars) |
 | **Status** | idle, thinking, editing, running cmd, searching web, subagent, stale, ended |

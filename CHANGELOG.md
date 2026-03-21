@@ -5,7 +5,7 @@
 Initial public release.
 
 ### Dashboard
-- Live-updating TUI with 16 columns: slug, project, branch, status, model, context %, tokens, tools, files edited, running agents, errors, turns, stop reason, duration, start time, last activity
+- Live-updating TUI with 16 columns: name, project, branch, status, model, context %, tokens, tools, files edited, running agents, errors, turns, stop reason, duration, start time, last activity
 - Detail panel showing full path, token breakdown, last user prompt, and Claude's response
 - Sort picker with 10 modes (activity, name, status, duration, turns, tokens, tools, files, agents, errors)
 - Session health check bar comparing tracked sessions against running Claude processes
