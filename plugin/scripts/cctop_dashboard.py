@@ -268,7 +268,7 @@ class ColumnDef:
 
 
 COLUMNS: tuple[ColumnDef, ...] = (
-    ColumnDef("slug",
+    ColumnDef("slug", header="Name",
               cell=lambda s: (
                   Text.assemble(("● ", "#e0af68"), s.custom_title) if s.custom_title
                   else Text.assemble(("○ ", "dim"), s.session_id[:8])
