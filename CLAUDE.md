@@ -92,6 +92,22 @@ Before committing, run a basic security audit on staged changes:
 - This keeps the main working directory clean on `main` and avoids conflicts with other sessions.
 - When the work is done and merged, exit the worktree with `ExitWorktree`.
 
+## PR Reviews & Comments
+
+- **NEVER post comments, reviews, or replies to GitHub PRs/issues without showing the exact text first and getting explicit approval.** GitHub doesn't allow deleting submitted reviews, so mistakes are permanent.
+- Keep PR feedback concise and actionable.
+
+### Reviewing External PRs
+
+To review and locally test a PR from another contributor:
+
+1. Fetch the PR: `git fetch origin pull/N/head`
+2. Create a worktree: `EnterWorktree name=review-pr-N`
+3. Checkout the fetched code: `git checkout FETCH_HEAD`
+4. Dev install if needed: `./install.sh --dev`
+5. Review, run tests, eyeball the UI
+6. When done: `ExitWorktree` (remove, since it's read-only review work)
+
 ## GitHub CLI Gotchas
 
 - This repo's remote is `github.com`, but `GH_HOST` may be set to GHE. Always prefix `gh` commands with `GH_HOST=github.com` (e.g. `GH_HOST=github.com gh pr create ...`).
@@ -111,7 +127,11 @@ This project uses a structured PR-groups workflow defined in `plans/pr-groups.md
 3. Use `EnterWorktree` to create the worktree, do not skip this step
 4. Enter plan mode before implementing, get user approval before writing code
 5. Make granular commits (one per logical change)
-6. After merge, update `BACKLOG.md` (mark items done) and `plans/pr-groups.md` (check off the PR group), but do NOT commit or push these changes, the user will review and commit manually
+6. After user approves, follow this exact post-merge sequence:
+   1. Merge the PR on remote (`gh pr merge`)
+   2. Exit the worktree (`ExitWorktree`)
+   3. Pull remote main (`git pull`)
+   4. Update `BACKLOG.md` (mark items done) and `plans/pr-groups.md` (check off the PR group), but do NOT commit or push these changes, the user will review and commit manually
 
 ## Project-Level Files (BACKLOG.md, CLAUDE.md)
 
