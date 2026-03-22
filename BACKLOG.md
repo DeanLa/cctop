@@ -3,9 +3,15 @@
 Items tagged with `PR-X` are assigned to a PR group, see [plans/pr-groups.md](plans/pr-groups.md) for details.
 When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
+## Manual
+- in Bottom panel
+  - full session-id
+  - model name (not truncated)
+- detect reading/exploring/searching
+
 ## Table & Columns
 - [ ] **6.** Group/collapse sessions by project directory `PR-M`
-- [ ] **41.** Rename `slug` column to `Name`, the internal field is called `slug` (short directory name) but the user-facing column label should be `Name` since it shows the session's display name (custom title or slug)
+- [x] **41.** Rename `slug` column to `Name`, the internal field is called `slug` (short directory name) but the user-facing column label should be `Name` since it shows the session's display name (custom title or slug) — [#18](https://github.com/DeanLa/cctop/pull/18)
 
 ## Detail Panel
 - [ ] **14.** Parse system-injected user messages (e.g. `<task-notification>`) and display them nicely, show "Subagent completed: <summary>" instead of hiding them entirely `PR-H`
@@ -14,6 +20,8 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
 ## Session Actions
 - [ ] **18.** Add rename session action from the dashboard, see [`plans/rename-session-externally.md`](plans/rename-session-externally.md) — blocked: running sessions don't pick up external title changes *(was PR-F, deferred)*
+- [ ] **46.** Jump to PyCharm: keybinding (`p`) to open/focus the PyCharm project window for the selected session's `cwd` (uses `open -a "PyCharm Professional" <cwd>` on macOS, no hook changes needed)
+- [ ] **47.** Tmux attach: add env var gate (`os.environ.get("TMUX")`) to `check_action` so the `a` binding is hidden entirely when cctop isn't in tmux, keep per-session `tmux_session` check as second layer
 
 ## Session Lifecycle
 - [ ] **22.** Session history, persist ended session stats (tokens, cost, turns, duration) for later querying `PR-I`
