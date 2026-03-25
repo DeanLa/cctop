@@ -1,6 +1,6 @@
 #!/bin/bash
 # cctop hook — writes status JSON for the cctop dashboard.
-# Registered for all 7 hook events. Must be fast (<50ms).
+# Registered for 12 hook events. Must be fast (<50ms).
 #
 # Writes ONLY hook-owned fields to <id>.json. The poller writes its own
 # fields to <id>.poller.json. The dashboard merges both. No shared-file races.
