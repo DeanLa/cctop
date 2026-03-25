@@ -2,9 +2,9 @@
 # Launch cctop — Claude Code Sessions dashboard with the background poller
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 
-# Handle --reset: wipe session data before starting
+# Handle --reset: wipe session data but preserve config
 if [[ " $* " == *" --reset "* ]]; then
-    rm -rf ~/.cctop
+    rm -f ~/.cctop/*.json ~/.cctop/*.poller.json ~/.cctop/*.debug.jsonl
     mkdir -p ~/.cctop
     echo "cctop: session data cleared"
 fi
