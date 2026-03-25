@@ -30,11 +30,18 @@ Every hook receives a JSON object on stdin with at least:
 | `SubagentStart` | `agent_id`, `agent_type` | agent type | No |
 | `SubagentStop` | `stop_hook_active`, `agent_id`, `agent_type`, `agent_transcript_path`, `last_assistant_message` | agent type | Yes (`decision:block`) |
 | `Stop` | `stop_hook_active`, `last_assistant_message` | — | Yes (`decision:block`) |
+| `StopFailure` | `error` (rate_limit/auth_failed/billing_error/invalid_request/server_error/max_output_tokens/unknown), `error_details`, `last_assistant_message` | — | No |
 | `TeammateIdle` | `teammate_name`, `team_name` | — | Yes (exit 2) |
-| `TaskCompleted` | (unknown extra) | — | Yes (exit 2) |
+| `TaskCompleted` | `task_id`, `task_subject`, `task_description`, `teammate_name`, `team_name` | — | Yes (exit 2) |
+| `Notification` | `message`, `title`, `notification_type` (permission_prompt/idle_prompt/auth_success/elicitation_dialog) | notification_type | No |
 | `InstructionsLoaded` | `file_path`, `memory_type`, `load_reason`, `globs`, `trigger_file_path`, `parent_file_path` | — | No |
 | `ConfigChange` | (config source) | config source | Yes |
 | `PreCompact` | (compaction trigger) | `manual`/`auto` | No |
+| `PostCompact` | (compaction trigger) | `manual`/`auto` | No |
+| `FileChanged` | `file_path`, `event` (change/add/unlink) | — | No |
+| `CwdChanged` | `old_cwd`, `new_cwd` | — | No |
+| `Elicitation` | MCP server name in matcher, form field requirements | MCP server name | No |
+| `ElicitationResult` | MCP server name, user's response | MCP server name | No |
 | `WorktreeCreate` | (worktree info) | — | Yes (non-zero exit) |
 | `WorktreeRemove` | (worktree info) | — | No |
 | `SessionEnd` | (end reason) | end reason | No |
