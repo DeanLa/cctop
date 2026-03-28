@@ -1271,3 +1271,70 @@ async def test_theme_persists_across_restart(fake_config_dir):
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         assert app.theme == "dracula"
+
+
+def test_save_config_sort(fake_config_dir):
+    """Sort settings round-trip through config."""
+    save_config({"sort": {"column": "status", "reverse": False}})
+    cfg = load_config()
+    assert cfg["sort"]["column"] == "status"
+    assert cfg["sort"]["reverse"] is False
+
+
+def test_save_config_hidden_columns(fake_config_dir):
+    """Hidden columns round-trip through config."""
+    save_config({"columns": {"hidden": ["branch", "model"]}})
+    cfg = load_config()
+    assert cfg["columns"]["hidden"] == ["branch", "model"]
+
+
+@pytest.mark.asyncio
+async def test_sort_persists_across_restart(fake_config_dir):
+    """Sort mode saved to config should be loaded on next startup."""
+    save_config({"sort": {"column": "status", "reverse": False}})
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        assert app.sort_mode == "status"
+        assert app.sort_reverse is False
+
+
+@pytest.mark.asyncio
+async def test_hidden_columns_persist_across_restart(fake_config_dir):
+    """Hidden columns saved to config should be loaded on next startup."""
+    save_config({"columns": {"hidden": ["branch", "model"]}})
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        assert app._hidden_columns == {"branch", "model"}
+        table = app.query_one(DataTable)
+        assert len(table.columns) == 14  # 16 total - 2 hidden
+
+
+@pytest.mark.asyncio
+async def test_sort_change_persists_to_config(fake_config_dir):
+    """Changing sort via keybinding should persist to config."""
+    tmp_dir, config_path = fake_config_dir
+    write_fake_session(tmp_dir, "aaaa-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        # Move to status column (index 3) and sort
+        for _ in range(3):
+            await pilot.press("right")
+        await pilot.press("s")
+        await pilot.pause()
+    cfg = load_config()
+    assert cfg["sort"]["column"] == "status"
+
+
+@pytest.mark.asyncio
+async def test_hide_column_persists_to_config(fake_config_dir):
+    """Hiding a column should persist to config."""
+    tmp_dir, config_path = fake_config_dir
+    write_fake_session(tmp_dir, "aaaa-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        await pilot.press("h")
+        await pilot.pause()
+    cfg = load_config()
+    assert len(cfg["columns"]["hidden"]) == 1
