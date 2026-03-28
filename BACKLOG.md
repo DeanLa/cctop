@@ -7,7 +7,6 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **6.** Group/collapse sessions by project directory `PR-M`
 - [ ] **49.** Add `Effort` column showing the model's reasoning effort level (the setting controlled by `/effort` in Claude Code, e.g. low/medium/high) `PR-O`
 - [ ] **50.** Add `Cost` column showing estimated session cost, replicate the token-based cost calculation from `claude-cost` natively within cctop (don't shell out to the script) `PR-O`
-- [x] **41.** Rename `slug` column to `Name`, the internal field is called `slug` (short directory name) but the user-facing column label should be `Name` since it shows the session's display name (custom title or slug) — [#18](https://github.com/DeanLa/cctop/pull/18)
 
 ## Detail Panel
 - [ ] **14.** Parse system-injected user messages (e.g. `<task-notification>`) and display them nicely, show "Subagent completed: <summary>" instead of hiding them entirely `PR-H`
@@ -35,21 +34,6 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **45.** Default visible columns in config: define which columns are shown by default, so new columns start hidden unless opted in (depends on #36)
 
 ## Activity & Status Detection
-- [ ] **48.** Detect and display granular activity statuses based on tool names, expand the STATUS_STYLE_MAP with distinct labels/colors for tools that currently fall through to the generic catch-all `PR-P`
-- [ ] **54.** Show `planning` status when the session is in plan mode. Requires a mode flag in the hook JSON (set on EnterPlanMode, cleared on Stop/UserPromptSubmit) since the current last-event-wins model would immediately overwrite it with the next tool call `PR-P`
-- [ ] **55.** Detect MCP tool usage, tool names matching `tool:mcp__<server>__<action>` should display as `mcp:<server>` with a distinct color instead of falling through to the generic cyan catch-all `PR-P`
-- [ ] **56.** Show `reviewing` status when a code-review or PR-review subagent is active, detectable from Agent tool's `subagent_type` field `PR-P`
-- [ ] **57.** Show `researching` status when an explore/research subagent is spawned, distinguish from generic `subagent` label `PR-P`
-- [ ] **60.** Idle sub-statuses: track the last significant tool before Stop to distinguish different idle states. Hook sets a `last_tool` field on each PreToolUse, then on Stop maps it to an idle variant `PR-P`
-- [ ] **61.** `awaiting plan` idle status — last tool was ExitPlanMode, session is waiting for user to approve or reject the plan `PR-P`
-- [ ] **62.** `needs input` idle status — last tool was AskUserQuestion, session is blocked on a clarification question from the user `PR-P`
-- [ ] **63.** `awaiting permission` idle status — session is waiting for tool approval. Best detected via Notification hook with `notification_type: permission_prompt` (see #65), fallback to last-tool inference `PR-P`
-- [ ] **64.** Color-code idle variants by urgency: `needs input`/`awaiting permission` in orange (action needed now), `awaiting plan` in blue (review when ready), plain `idle` in green (no action needed) `PR-P`
-- [ ] **65.** Register for `Notification` hook event. Use `notification_type` to reliably detect idle sub-statuses: `permission_prompt` → awaiting permission (#63), `elicitation_dialog` → awaiting MCP input. Much cleaner than inferring from last tool name `PR-P`
-- [ ] **66.** Register for `StopFailure` hook event. Show error status with sub-type (`rate_limit`, `auth_failed`, `billing_error`, `server_error`, `max_output_tokens`) in red, so users can see at a glance when a session hit a wall `PR-P`
-- [ ] **67.** Register for `PostToolUseFailure` hook event. Track tool failure count per session and optionally show transient `tool error` indicator `PR-P`
-- [ ] **68.** Register for `SubagentStart` hook event for more accurate subagent lifecycle tracking (currently only SubagentStop is registered) `PR-P`
-- [ ] **69.** Register for `CwdChanged` hook event to update session cwd in real time instead of only capturing it at session start `PR-P`
 - [ ] **53.** Classify Bash commands into sub-statuses by inspecting the command string: `testing` (pytest, jest, npm test, go test, cargo test, make test), `building` (npm build, tsc, webpack, cargo build, make, go build), `installing` (pip install, npm install, brew install, cargo add), `linting` (eslint, ruff, black, prettier, mypy), `git op` (git commit/push/pull/rebase/merge), `creating PR` (gh pr create/merge) `PR-Q`
 - [ ] **58.** Detect repeated test→edit cycles and show `debugging` status (e.g. if the last N tool calls alternate between Bash-test and Edit, the session is likely in a fix loop) `PR-Q`
 - [ ] **59.** Show `deploying` status for infrastructure commands (docker, kubectl, terraform, aws, gcloud) `PR-Q`
@@ -89,3 +73,19 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [x] **37.** Column selection & sort/hide (left/right to select column, s to sort, h to hide, c for column picker, C to show all) — [#17](https://github.com/DeanLa/cctop/pull/17)
 - [x] **38.** Support versioning: plugin and CLI app should share the same version, tag releases in git
 - [x] **39.** Maintain a `CHANGELOG.md` with entries for each release, generated from commit messages or PR descriptions, maintained by Claude automatically
+- [x] **41.** Rename `slug` column to `Name` — [#18](https://github.com/DeanLa/cctop/pull/18)
+- [x] **48.** Detect and display granular activity statuses based on tool names, expand the STATUS_STYLE_MAP with distinct labels/colors for tools that currently fall through to the generic catch-all `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **54.** Show `planning` status when the session is in plan mode `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **55.** Detect MCP tool usage, display as `mcp:<server>` with distinct color `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **56.** Show `reviewing` status for code-review/PR-review subagents `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **57.** Show `researching` status for explore/research subagents `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **60.** Idle sub-statuses: track last_tool before Stop for idle variant inference `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **61.** `awaiting plan` idle status (last tool was ExitPlanMode) `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **62.** `needs input` idle status (last tool was AskUserQuestion) `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **63.** `awaiting permission` idle status via Notification hook `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **64.** Color-code idle variants by urgency (orange/blue/green) `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **65.** Register for `Notification` hook event `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **66.** Register for `StopFailure` hook event, show error status in red `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **67.** Register for `PostToolUseFailure` hook event, track tool failure count `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **68.** Register for `SubagentStart` hook event `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **69.** Register for `CwdChanged` hook event `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
