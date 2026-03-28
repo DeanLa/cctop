@@ -44,7 +44,7 @@ cctop gives you one screen to see all of them.
 | **Name** | Session display name (custom title or directory slug) |
 | **Project** | Working directory name |
 | **Branch** | Git branch (truncated to 20 chars) |
-| **Status** | idle, thinking, editing, running cmd, searching web, subagent, stale, ended |
+| **Status** | Granular activity status (see below) |
 | **Model** | Model family and version (e.g. "sonnet 4.6", "opus 4.6") |
 | **Ctx%** | Context window usage percentage |
 | **Tokens** | Total tokens consumed (e.g. "145k") |
@@ -59,6 +59,30 @@ cctop gives you one screen to see all of them.
 | **Activity** | Time since last event (e.g. "2m ago") |
 
 Highlight any row to see a detail panel with the full working directory, git branch, token breakdown, files edited, subagent and error counts, the last user prompt, and Claude's last response.
+
+### Status Labels
+
+The Status column shows what each session is doing right now:
+
+| Status | Color | Meaning |
+|--------|-------|---------|
+| idle | green | Waiting, no action needed |
+| awaiting plan | blue | Plan ready for your review |
+| needs input | orange | Blocked on a question from Claude |
+| awaiting permission | orange | Waiting for you to approve a tool use |
+| thinking | yellow | Claude is generating a response |
+| planning | blue | Session is in plan mode (reading/searching for the plan) |
+| editing | orange | Writing or editing files |
+| running cmd | green | Executing a shell command |
+| searching | cyan | Searching files (Glob/Grep) |
+| reading | cyan | Reading files |
+| searching web | magenta | Web search or fetch |
+| subagent | purple | Running a subagent |
+| reviewing | purple | Running a code review subagent |
+| researching | purple | Running an explore/research subagent |
+| mcp:*server* | magenta | Using an MCP tool (e.g. mcp:atlassian) |
+| error: *type* | red | Hit an error (rate limit, auth failed, etc.) |
+| stale | dim | No activity for 1+ hour |
 
 ### Session Lifecycle
 

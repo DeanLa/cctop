@@ -73,10 +73,18 @@ def _render_message(
 
 
 STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
+    # Idle variants
     "idle": ("green", "idle"),
+    "idle:awaiting_plan": ("blue", "awaiting plan"),
+    "idle:needs_input": ("#ff8700", "needs input"),
+    # Active
     "thinking": ("yellow", "thinking"),
     "started": ("blue", "started"),
     "resumed": ("#5fd7ff", "resumed"),
+    # Permission / input waiting
+    "awaiting_permission": ("#ff8700", "awaiting permission"),
+    "awaiting_mcp_input": ("#ff8700", "awaiting mcp input"),
+    # Tools
     "tool:Bash": ("green", "running cmd"),
     "tool:WebSearch": ("magenta", "searching web"),
     "tool:WebFetch": ("magenta", "searching web"),
@@ -84,8 +92,21 @@ STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "tool:Read": ("cyan", "reading"),
     "tool:Edit": ("#ff8700", "editing"),
     "tool:Write": ("#ff8700", "editing"),
+    "tool:NotebookEdit": ("#ff8700", "editing"),
     "tool:Glob": ("cyan", "searching"),
     "tool:Grep": ("cyan", "searching"),
+    "tool:EnterPlanMode": ("blue", "entering plan"),
+    "tool:ExitPlanMode": ("blue", "exiting plan"),
+    "tool:AskUserQuestion": ("#ff8700", "asking user"),
+    "tool:EnterWorktree": ("blue", "entering worktree"),
+    "tool:ExitWorktree": ("blue", "exiting worktree"),
+    "tool:TaskCreate": ("#af87ff", "creating task"),
+    "tool:TaskUpdate": ("#af87ff", "updating task"),
+    "tool:TaskList": ("cyan", "listing tasks"),
+    "tool:TaskGet": ("cyan", "reading task"),
+    "tool:SendMessage": ("#af87ff", "messaging"),
+    "tool:TeamCreate": ("#af87ff", "creating team"),
+    "tool:Skill": ("#af87ff", "running skill"),
     "ended": ("dim", "ended"),
 }
 
@@ -226,6 +247,12 @@ class SessionInfo:
     subagent_cache_creation_tokens: int = 0
     tmux_session: str = ""
     tmux_window: str = ""
+    planning_mode: bool = False
+    last_tool: str = ""
+    active_subagent_type: str = ""
+    error_type: str = ""
+    error_details: str = ""
+    tool_failures: int = 0
 
     @property
     def context_tokens(self) -> int:
@@ -236,11 +263,35 @@ class SessionInfo:
 # --- Helper functions ---
 
 
-def styled_status(raw: str, last_activity: str) -> Text:
+def styled_status(session: SessionInfo) -> Text:
     """Return a Rich Text object with colour-coded status."""
-    age = _parse_age_seconds(last_activity)
+    raw = session.status
+    age = _parse_age_seconds(session.last_activity)
     if age is not None and age > STALE_SECONDS:
         return Text("stale", style="dim")
+
+    # Error states (error:rate_limit, error:auth_failed, etc.)
+    if raw.startswith("error:"):
+        label = raw.split(":", 1)[1].replace("_", " ")
+        return Text(f"error: {label}", style="red bold")
+
+    # Planning mode overrides tool-specific statuses
+    if session.planning_mode and raw.startswith("tool:"):
+        return Text("planning", style="blue")
+
+    # Subagent type overrides for tool:Agent
+    if raw == "tool:Agent" and session.active_subagent_type:
+        st = session.active_subagent_type.lower()
+        if any(k in st for k in ("review", "pr-review", "code-review")):
+            return Text("reviewing", style="#af87ff")
+        if any(k in st for k in ("explore", "research")):
+            return Text("researching", style="#af87ff")
+
+    # MCP tool detection (tool:mcp__server__action → mcp:server)
+    if raw.startswith("tool:mcp__"):
+        parts = raw.split("__", 2)
+        server = parts[1] if len(parts) >= 2 else "mcp"
+        return Text(f"mcp:{server}", style="magenta")
 
     if raw in STATUS_STYLE_MAP:
         colour, label = STATUS_STYLE_MAP[raw]
@@ -299,7 +350,7 @@ COLUMNS: tuple[ColumnDef, ...] = (
     ),
     ColumnDef(
         "status",
-        cell=lambda s: styled_status(s.status, s.last_activity),
+        cell=lambda s: styled_status(s),
         sort_key=lambda s: s.status.lower(),
     ),
     ColumnDef(
@@ -421,6 +472,12 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         running_agents=hook.get("running_agents", 0),
         tmux_session=hook.get("tmux_session", ""),
         tmux_window=hook.get("tmux_window", ""),
+        planning_mode=hook.get("planning_mode", False),
+        last_tool=hook.get("last_tool", ""),
+        active_subagent_type=hook.get("active_subagent_type", ""),
+        error_type=hook.get("error_type", ""),
+        error_details=hook.get("error_details", ""),
+        tool_failures=hook.get("tool_failures", 0),
         # Poller-only fields
         slug=poller.get("slug", ""),
         git_branch=poller.get("git_branch", ""),
@@ -1306,6 +1363,12 @@ class SessionsDashboard(App):
                 _plural(s.subagent_count, "subagent") if s.subagent_count else None,
                 f"[red]{_plural(s.error_count, 'error')}[/red]"
                 if s.error_count
+                else None,
+                f"[red]{_plural(s.tool_failures, 'tool failure')}[/red]"
+                if s.tool_failures
+                else None,
+                f"[red]{s.error_details}[/red]"
+                if s.error_details
                 else None,
                 f"stop: {s.stop_reason}"
                 if s.stop_reason and s.stop_reason != "end_turn"

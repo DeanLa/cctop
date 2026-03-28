@@ -36,6 +36,7 @@ from cctop_dashboard import (
     check_session_health,
     load_sessions,
     purge_dead_sessions,
+    styled_status,
     STATUS_DIR,
 )
 
@@ -86,7 +87,13 @@ def write_fake_session(tmpdir: Path, sid: str, *,
                        custom_title: str = "",
                        pid: int | None = None,
                        last_activity: str | None = None,
-                       started_at: str | None = None) -> None:
+                       started_at: str | None = None,
+                       planning_mode: bool = False,
+                       last_tool: str = "",
+                       active_subagent_type: str = "",
+                       error_type: str = "",
+                       error_details: str = "",
+                       tool_failures: int = 0) -> None:
     """Write a pair of hook + poller JSON files into tmpdir."""
     hook = {
         "session_id": sid,
@@ -97,6 +104,12 @@ def write_fake_session(tmpdir: Path, sid: str, *,
         "model": model,
         "tool_count": 0,
         "running_agents": running_agents,
+        "planning_mode": planning_mode,
+        "last_tool": last_tool,
+        "active_subagent_type": active_subagent_type,
+        "error_type": error_type,
+        "error_details": error_details,
+        "tool_failures": tool_failures,
     }
     if pid is not None:
         hook["pid"] = pid
@@ -988,3 +1001,178 @@ async def test_tmux_attach_binding_updates_on_navigation(fake_status_dir):
         # One should be True, one should be None (order may vary by sort)
         checks = {first_check, second_check}
         assert True in checks and None in checks
+
+
+# --- styled_status unit tests ---
+
+
+def test_styled_status_idle():
+    s = SessionInfo(status="idle", last_activity=_now_iso())
+    assert styled_status(s).plain == "idle"
+
+
+def test_styled_status_idle_awaiting_plan():
+    s = SessionInfo(status="idle:awaiting_plan", last_activity=_now_iso())
+    assert styled_status(s).plain == "awaiting plan"
+
+
+def test_styled_status_idle_needs_input():
+    s = SessionInfo(status="idle:needs_input", last_activity=_now_iso())
+    assert styled_status(s).plain == "needs input"
+
+
+def test_styled_status_awaiting_permission():
+    s = SessionInfo(status="awaiting_permission", last_activity=_now_iso())
+    assert styled_status(s).plain == "awaiting permission"
+
+
+def test_styled_status_awaiting_mcp_input():
+    s = SessionInfo(status="awaiting_mcp_input", last_activity=_now_iso())
+    assert styled_status(s).plain == "awaiting mcp input"
+
+
+def test_styled_status_error_rate_limit():
+    s = SessionInfo(status="error:rate_limit", last_activity=_now_iso())
+    result = styled_status(s)
+    assert "rate limit" in result.plain
+    assert "red" in str(result.style)
+
+
+def test_styled_status_error_auth_failed():
+    s = SessionInfo(status="error:auth_failed", last_activity=_now_iso())
+    assert "auth failed" in styled_status(s).plain
+
+
+def test_styled_status_error_max_output_tokens():
+    s = SessionInfo(status="error:max_output_tokens", last_activity=_now_iso())
+    assert "max output tokens" in styled_status(s).plain
+
+
+def test_styled_status_planning_mode_overrides_tool():
+    s = SessionInfo(status="tool:Edit", last_activity=_now_iso(), planning_mode=True)
+    assert styled_status(s).plain == "planning"
+
+
+def test_styled_status_planning_mode_no_override_for_non_tool():
+    s = SessionInfo(status="thinking", last_activity=_now_iso(), planning_mode=True)
+    assert styled_status(s).plain == "thinking"
+
+
+def test_styled_status_mcp_tool():
+    s = SessionInfo(status="tool:mcp__atlassian__jira_search", last_activity=_now_iso())
+    assert styled_status(s).plain == "mcp:atlassian"
+
+
+def test_styled_status_mcp_tool_short_name():
+    s = SessionInfo(status="tool:mcp__myserver__do_thing", last_activity=_now_iso())
+    assert styled_status(s).plain == "mcp:myserver"
+
+
+def test_styled_status_reviewing_subagent():
+    s = SessionInfo(status="tool:Agent", last_activity=_now_iso(), active_subagent_type="code-reviewer")
+    assert styled_status(s).plain == "reviewing"
+
+
+def test_styled_status_reviewing_pr_review():
+    s = SessionInfo(status="tool:Agent", last_activity=_now_iso(), active_subagent_type="pr-review-toolkit:code-reviewer")
+    assert styled_status(s).plain == "reviewing"
+
+
+def test_styled_status_researching_subagent():
+    s = SessionInfo(status="tool:Agent", last_activity=_now_iso(), active_subagent_type="Explore")
+    assert styled_status(s).plain == "researching"
+
+
+def test_styled_status_researching_researcher():
+    s = SessionInfo(status="tool:Agent", last_activity=_now_iso(), active_subagent_type="branch-researcher")
+    assert styled_status(s).plain == "researching"
+
+
+def test_styled_status_generic_subagent():
+    s = SessionInfo(status="tool:Agent", last_activity=_now_iso(), active_subagent_type="general-purpose")
+    # No match on review/explore/research, falls through to STATUS_STYLE_MAP["tool:Agent"]
+    assert styled_status(s).plain == "subagent"
+
+
+def test_styled_status_subagent_no_type():
+    s = SessionInfo(status="tool:Agent", last_activity=_now_iso(), active_subagent_type="")
+    assert styled_status(s).plain == "subagent"
+
+
+def test_styled_status_stale():
+    s = SessionInfo(status="idle", last_activity=_ago_iso(120))
+    assert styled_status(s).plain == "stale"
+
+
+def test_styled_status_unknown_tool_catchall():
+    s = SessionInfo(status="tool:SomeNewTool", last_activity=_now_iso())
+    assert styled_status(s).plain == "SomeNewTool"
+
+
+def test_styled_status_known_tools():
+    """Verify key tools from STATUS_STYLE_MAP render their labels."""
+    cases = [
+        ("tool:Bash", "running cmd"),
+        ("tool:WebSearch", "searching web"),
+        ("tool:Read", "reading"),
+        ("tool:Edit", "editing"),
+        ("tool:Glob", "searching"),
+        ("tool:AskUserQuestion", "asking user"),
+        ("tool:EnterPlanMode", "entering plan"),
+        ("tool:SendMessage", "messaging"),
+        ("tool:Skill", "running skill"),
+    ]
+    for status, expected in cases:
+        s = SessionInfo(status=status, last_activity=_now_iso())
+        assert styled_status(s).plain == expected, f"Failed for {status}"
+
+
+# --- New field loading tests ---
+
+
+def test_load_sessions_new_hook_fields(fake_status_dir):
+    """New hook fields should be loaded into SessionInfo."""
+    write_fake_session(fake_status_dir, "new-fields",
+                       planning_mode=True, last_tool="ExitPlanMode",
+                       active_subagent_type="Explore",
+                       error_type="rate_limit", error_details="Try again later",
+                       tool_failures=3)
+    sessions = load_sessions()
+    assert len(sessions) == 1
+    s = sessions[0]
+    assert s.planning_mode is True
+    assert s.last_tool == "ExitPlanMode"
+    assert s.active_subagent_type == "Explore"
+    assert s.error_type == "rate_limit"
+    assert s.error_details == "Try again later"
+    assert s.tool_failures == 3
+
+
+def test_load_sessions_new_fields_default(fake_status_dir):
+    """New hook fields should default to zero/empty/false when absent."""
+    write_fake_session(fake_status_dir, "defaults")
+    sessions = load_sessions()
+    s = sessions[0]
+    assert s.planning_mode is False
+    assert s.last_tool == ""
+    assert s.active_subagent_type == ""
+    assert s.error_type == ""
+    assert s.error_details == ""
+    assert s.tool_failures == 0
+
+
+# --- Status rendering in table integration test ---
+
+
+@pytest.mark.asyncio
+async def test_idle_variant_renders(fake_status_dir):
+    """Idle variants should render with correct labels in the table."""
+    write_fake_session(fake_status_dir, "plan-wait", status="idle:awaiting_plan")
+    write_fake_session(fake_status_dir, "input-wait", status="idle:needs_input")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=2)
+        # Verify sessions loaded with correct statuses
+        statuses = {s.status for s in app._sessions}
+        assert "idle:awaiting_plan" in statuses
+        assert "idle:needs_input" in statuses
