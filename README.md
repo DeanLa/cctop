@@ -93,14 +93,21 @@ A health check bar may appear at the bottom of the dashboard when cctop detects 
 
 ### Configuration
 
-cctop stores settings in `~/.cctop/config.toml`. Currently supported:
+cctop stores settings in `~/.cctop/config.toml`. All settings are saved automatically as you use the dashboard:
 
 ```toml
 [ui]
-theme = "textual-dark"   # any Textual built-in theme
+theme = "textual-dark"   # any Textual built-in theme (ctrl+p to change)
+
+[sort]
+column = "activity"      # column key to sort by
+reverse = true           # sort direction
+
+[columns]
+hidden = []              # list of hidden column keys
 ```
 
-Theme changes via the command palette (`ctrl+p`) are automatically saved and restored on next launch. The `--reset` flag clears session data but preserves your config.
+Theme, sort, and column visibility all persist across restarts. The `--reset` flag clears session data but preserves your config.
 
 ## Troubleshooting
 
