@@ -267,8 +267,9 @@ def test_format_start_time_malformed():
 
 @pytest.fixture
 def fake_status_dir(tmp_path):
-    """Create a temp dir and monkeypatch STATUS_DIR to point there."""
-    with patch("cctop_dashboard.STATUS_DIR", tmp_path):
+    """Create a temp dir and monkeypatch STATUS_DIR and CONFIG_PATH to point there."""
+    with patch("cctop_dashboard.STATUS_DIR", tmp_path), \
+         patch("cctop_dashboard.CONFIG_PATH", tmp_path / "config.toml"):
         yield tmp_path
 
 
@@ -1197,14 +1198,18 @@ def fake_config_dir(tmp_path):
 def test_load_config_missing_file(fake_config_dir):
     """Missing config file returns defaults."""
     cfg = load_config()
-    assert cfg == {"ui": {"theme": "textual-dark"}}
+    assert cfg["ui"]["theme"] == "textual-dark"
+    assert cfg["sort"]["column"] == "activity"
+    assert cfg["columns"]["hidden"] == []
 
 
 def test_load_config_empty_file(fake_config_dir):
     _, config_path = fake_config_dir
     config_path.write_text("")
     cfg = load_config()
-    assert cfg == {"ui": {"theme": "textual-dark"}}
+    assert cfg["ui"]["theme"] == "textual-dark"
+    assert cfg["sort"]["column"] == "activity"
+    assert cfg["columns"]["hidden"] == []
 
 
 def test_load_config_partial(fake_config_dir):
@@ -1220,7 +1225,9 @@ def test_load_config_invalid_toml(fake_config_dir):
     _, config_path = fake_config_dir
     config_path.write_text("this is not [valid toml")
     cfg = load_config()
-    assert cfg == {"ui": {"theme": "textual-dark"}}
+    assert cfg["ui"]["theme"] == "textual-dark"
+    assert cfg["sort"]["column"] == "activity"
+    assert cfg["columns"]["hidden"] == []
 
 
 def test_save_config_creates_file(fake_config_dir):

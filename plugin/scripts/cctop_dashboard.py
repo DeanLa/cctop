@@ -45,7 +45,11 @@ CONTEXT_WINDOW = 200_000
 STALE_SECONDS = 60 * 60
 HEALTH_CHECK_INTERVAL = 10.0  # seconds between ps-based health checks
 
-_CONFIG_DEFAULTS: dict = {"ui": {"theme": "textual-dark"}}
+_CONFIG_DEFAULTS: dict = {
+    "ui": {"theme": "textual-dark"},
+    "sort": {"column": "activity", "reverse": True},
+    "columns": {"hidden": []},
+}
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -982,9 +986,13 @@ class SessionsDashboard(App):
         self._config_loaded = False
         cfg = load_config()
         self.theme = cfg.get("ui", {}).get("theme", "textual-dark")
-        self._config_loaded = True
-        self._init_state()
+        hidden = cfg.get("columns", {}).get("hidden", [])
+        self._init_state(hidden_columns=set(hidden))
+        sort_cfg = cfg.get("sort", {})
+        self.sort_mode = sort_cfg.get("column", "activity")
+        self.sort_reverse = sort_cfg.get("reverse", True)
         self._setup_table()
+        self._config_loaded = True
         self._schedule_refresh()
         self.set_interval(0.5, self._schedule_refresh)
 
@@ -993,13 +1001,13 @@ class SessionsDashboard(App):
         if getattr(self, "_config_loaded", False):
             save_config({"ui": {"theme": new_theme}})
 
-    def _init_state(self) -> None:
+    def _init_state(self, hidden_columns: set[str] | None = None) -> None:
         """Initialize per-instance mutable state."""
         self._sessions: list[SessionInfo] = []
         self._last_health_check: float = 0.0
         self._last_health: HealthStatus | None = None
         self._last_row_keys: list[str] = []
-        self._hidden_columns: set[str] = set()
+        self._hidden_columns: set[str] = hidden_columns or set()
 
     def _setup_table(self) -> None:
         """Configure the DataTable with columns from COLUMNS definitions."""
@@ -1090,6 +1098,12 @@ class SessionsDashboard(App):
             self.sort_reverse = fallback.reverse_sort
         else:
             self._update_subtitle()
+        self._persist_columns()
+
+    def _persist_columns(self) -> None:
+        """Save current hidden columns to config."""
+        if getattr(self, "_config_loaded", False):
+            save_config({"columns": {"hidden": sorted(self._hidden_columns)}})
 
     def action_hide_column(self) -> None:
         """Hide the currently active column."""
@@ -1272,12 +1286,21 @@ class SessionsDashboard(App):
 
     def watch_sort_mode(self, new_value: str) -> None:
         self._on_sort_changed()
+        self._persist_sort()
 
     def watch_sort_reverse(self, new_value: bool) -> None:
         self._on_sort_changed()
+        self._persist_sort()
+
+    def _persist_sort(self) -> None:
+        """Save current sort settings to config."""
+        if getattr(self, "_config_loaded", False):
+            save_config({"sort": {"column": self.sort_mode, "reverse": self.sort_reverse}})
 
     def _on_sort_changed(self) -> None:
         """Re-sort table, update header arrows, refresh subtitle."""
+        if not getattr(self, "_config_loaded", False):
+            return
         self._repopulate_table()
         self._update_sort_headers()
         self._update_subtitle()
