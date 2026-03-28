@@ -48,7 +48,7 @@ HEALTH_CHECK_INTERVAL = 10.0  # seconds between ps-based health checks
 _CONFIG_DEFAULTS: dict = {
     "ui": {"theme": "textual-dark"},
     "sort": {"column": "activity", "reverse": True},
-    "columns": {"hidden": []},
+    "columns": {"hidden": ["errors", "started", "stop_reason", "tokens"]},
 }
 
 

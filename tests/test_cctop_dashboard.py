@@ -275,11 +275,11 @@ def fake_status_dir(tmp_path):
 
 @pytest.mark.asyncio
 async def test_app_starts_empty(fake_status_dir):
-    """Empty status dir → 16 columns, 0 rows."""
+    """Empty status dir → 12 visible columns (4 hidden by default), 0 rows."""
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         table = app.query_one(DataTable)
-        assert len(table.columns) == 16
+        assert len(table.columns) == 12
         assert table.row_count == 0
 
 
@@ -339,10 +339,10 @@ async def test_hide_column(fake_status_dir):
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
         table = app.query_one(DataTable)
-        assert len(table.columns) == 16
+        assert len(table.columns) == 12
         await pilot.press("h")
         await pilot.pause()
-        assert len(table.columns) == 15
+        assert len(table.columns) == 11
 
 
 @pytest.mark.asyncio
@@ -355,7 +355,7 @@ async def test_show_all_columns(fake_status_dir):
         table = app.query_one(DataTable)
         await pilot.press("h")
         await pilot.pause()
-        assert len(table.columns) == 15
+        assert len(table.columns) == 11
         await pilot.press("C")
         await pilot.pause()
         assert len(table.columns) == 16
@@ -369,8 +369,8 @@ async def test_cannot_hide_last_column(fake_status_dir):
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
         table = app.query_one(DataTable)
-        # Hide all but one column
-        for _ in range(15):
+        # Hide all but one column (start with 12 visible)
+        for _ in range(12):
             await pilot.press("h")
             await pilot.pause()
         assert len(table.columns) == 1
@@ -1200,7 +1200,7 @@ def test_load_config_missing_file(fake_config_dir):
     cfg = load_config()
     assert cfg["ui"]["theme"] == "textual-dark"
     assert cfg["sort"]["column"] == "activity"
-    assert cfg["columns"]["hidden"] == []
+    assert cfg["columns"]["hidden"] == ["errors", "started", "stop_reason", "tokens"]
 
 
 def test_load_config_empty_file(fake_config_dir):
@@ -1209,7 +1209,7 @@ def test_load_config_empty_file(fake_config_dir):
     cfg = load_config()
     assert cfg["ui"]["theme"] == "textual-dark"
     assert cfg["sort"]["column"] == "activity"
-    assert cfg["columns"]["hidden"] == []
+    assert cfg["columns"]["hidden"] == ["errors", "started", "stop_reason", "tokens"]
 
 
 def test_load_config_partial(fake_config_dir):
@@ -1227,7 +1227,7 @@ def test_load_config_invalid_toml(fake_config_dir):
     cfg = load_config()
     assert cfg["ui"]["theme"] == "textual-dark"
     assert cfg["sort"]["column"] == "activity"
-    assert cfg["columns"]["hidden"] == []
+    assert cfg["columns"]["hidden"] == ["errors", "started", "stop_reason", "tokens"]
 
 
 def test_save_config_creates_file(fake_config_dir):
@@ -1337,4 +1337,4 @@ async def test_hide_column_persists_to_config(fake_config_dir):
         await pilot.press("h")
         await pilot.pause()
     cfg = load_config()
-    assert len(cfg["columns"]["hidden"]) == 1
+    assert len(cfg["columns"]["hidden"]) == 5  # 4 default + 1 newly hidden
