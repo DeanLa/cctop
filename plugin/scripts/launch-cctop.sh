@@ -13,8 +13,12 @@ fi
 uv run --script "$SCRIPT_DIR/cctop-poller.py" &
 POLLER_PID=$!
 
-# Kill the poller when this script exits (dashboard quit, ctrl-c, etc.)
-trap "kill $POLLER_PID 2>/dev/null; wait $POLLER_PID 2>/dev/null" EXIT
+# Clean up on exit: kill poller and restore tmux automatic window naming
+trap "kill $POLLER_PID 2>/dev/null; wait $POLLER_PID 2>/dev/null; \
+  [ -n \"\$TMUX\" ] && tmux set-option -w automatic-rename on" EXIT
+
+# Set tmux tab title (if running inside tmux)
+[ -n "$TMUX" ] && tmux rename-window "cctop"
 
 # Run the dashboard in the foreground
 uv run --script "$SCRIPT_DIR/cctop_dashboard.py" "$@"
