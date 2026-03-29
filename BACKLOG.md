@@ -10,11 +10,8 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
 ## Detail Panel
 - [ ] **14.** Parse system-injected user messages (e.g. `<task-notification>`) and display them nicely, show "Subagent completed: <summary>" instead of hiding them entirely `PR-H`
-- [ ] **34.** Recent activity log: timestamped feed of recent events (tool calls, messages) for the selected session `PR-N`
-- [ ] **35.** Session metadata section: display relevant metadata from the session-status JSON `PR-N`
-- [ ] **70.** Expanded status context in the detail panel: show the full story behind the current status label. E.g. `editing` → file path being edited, `needs input` → the question text, `awaiting plan` → plan summary, `running cmd` → the command, `error: rate_limit` → error details, `searching web` → query. Pull from hook JSON fields (`tool_input`, `last_assistant_message`, `error_details`, `message`) `PR-N`
-- [ ] **51.** Show full session ID in the detail panel, not displayed anywhere in the UI currently `PR-N`
-- [ ] **52.** Show full (untruncated) model name in the detail panel, the table column truncates long model identifiers but the detail view should show the complete string `PR-N`
+- [ ] **34.** Recent activity log: timestamped feed of recent events (tool calls, messages) for the selected session `PR-R`
+- [ ] **70.** Expanded status context in the detail panel: show the full story behind the current status label. E.g. `editing` → file path being edited, `needs input` → the question text, `awaiting plan` → plan summary, `running cmd` → the command, `error: rate_limit` → error details, `searching web` → query. Pull from hook JSON fields (`tool_input`, `last_assistant_message`, `error_details`, `message`) `PR-R`
 
 ## Session Actions
 - [ ] **18.** Add rename session action from the dashboard, see [`plans/rename-session-externally.md`](plans/rename-session-externally.md) — blocked: running sessions don't pick up external title changes *(was PR-F, deferred)*
@@ -25,13 +22,11 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **22.** Session history, persist ended session stats (tokens, cost, turns, duration) for later querying `PR-I`
 
 ## UI & Theming
-- [x] **24.** Persist selected theme to disk so it survives restarts (config file) `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
-- [x] **36.** Config file in `~/.cctop/` for settings like stale threshold, theme, sort behavior, etc. `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
 - [ ] **40.** Group-by view: group rows by a column (e.g. project, model, status) with collapsible section headers
+- [ ] **71.** Group-by option: stale/not-stale, group sessions by staleness state (active vs. stale)
+- [ ] **72.** Group-by option: model, group sessions by their Claude model
+- [ ] **73.** Group-by option: renamed/not-renamed, group sessions by whether they have a custom title
 - [ ] **42.** Configurable column display order: allow users to reorder columns via config (depends on #36)
-- [x] **43.** Default sort column in config: set which column the table sorts by on startup (depends on #36) `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
-- [x] **44.** Persist hidden columns in config: save column visibility state across restarts so hidden columns stay hidden (depends on #36) `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
-- [x] **45.** Default visible columns in config: define which columns are shown by default, so new columns start hidden unless opted in (depends on #36) `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
 
 ## Activity & Status Detection
 - [ ] **53.** Classify Bash commands into sub-statuses by inspecting the command string: `testing` (pytest, jest, npm test, go test, cargo test, make test), `building` (npm build, tsc, webpack, cargo build, make, go build), `installing` (pip install, npm install, brew install, cargo add), `linting` (eslint, ruff, black, prettier, mypy), `git op` (git commit/push/pull/rebase/merge), `creating PR` (gh pr create/merge) `PR-Q`
@@ -89,3 +84,11 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [x] **67.** Register for `PostToolUseFailure` hook event, track tool failure count `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
 - [x] **68.** Register for `SubagentStart` hook event `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
 - [x] **69.** Register for `CwdChanged` hook event `PR-P` — [#22](https://github.com/DeanLa/cctop/pull/22)
+- [x] **24.** Persist selected theme to disk so it survives restarts (config file) `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
+- [x] **36.** Config file in `~/.cctop/` for settings like stale threshold, theme, sort behavior, etc. `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
+- [x] **43.** Default sort column in config: set which column the table sorts by on startup (depends on #36) `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
+- [x] **44.** Persist hidden columns in config: save column visibility state across restarts so hidden columns stay hidden (depends on #36) `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
+- [x] **45.** Default visible columns in config: define which columns are shown by default, so new columns start hidden unless opted in (depends on #36) `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
+- [x] **35.** Session metadata section: display relevant metadata from the session-status JSON `PR-N` — [#24](https://github.com/DeanLa/cctop/pull/24)
+- [x] **51.** Show full session ID in the detail panel, not displayed anywhere in the UI currently `PR-N` — [#24](https://github.com/DeanLa/cctop/pull/24)
+- [x] **52.** Show full (untruncated) model name in the detail panel, the table column truncates long model identifiers but the detail view should show the complete string `PR-N` — [#24](https://github.com/DeanLa/cctop/pull/24)
