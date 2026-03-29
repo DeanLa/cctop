@@ -152,6 +152,7 @@ When making changes that affect user-visible behavior (new features, changed col
 - **Simplify aggressively.** After implementing a feature, re-read the entire file looking for dead code, vestigial fields, duplicate patterns, unused defaults, and guards for impossible conditions. Budget a simplification pass after every feature.
 - **DRY is a hard rule.** Extract shared patterns even for 2 call sites.
 - **Code should read as stories.** Method ordering and naming should make the flow obvious top-to-bottom without jumping around.
+- **Config-aware changes.** Any change that introduces user-configurable state (new columns, sort options, visibility toggles, thresholds) must be persisted in `~/.cctop/config.toml`. Update `_CONFIG_DEFAULTS`, load the value on startup, and save on change.
 
 ## UI Preferences
 

@@ -25,13 +25,13 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **22.** Session history, persist ended session stats (tokens, cost, turns, duration) for later querying `PR-I`
 
 ## UI & Theming
-- [ ] **24.** Persist selected theme to disk so it survives restarts (config file) `PR-J`
-- [ ] **36.** Config file in `~/.cctop/` for settings like stale threshold, theme, sort behavior, etc. `PR-J`
+- [x] **24.** Persist selected theme to disk so it survives restarts (config file) `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
+- [x] **36.** Config file in `~/.cctop/` for settings like stale threshold, theme, sort behavior, etc. `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
 - [ ] **40.** Group-by view: group rows by a column (e.g. project, model, status) with collapsible section headers
 - [ ] **42.** Configurable column display order: allow users to reorder columns via config (depends on #36)
-- [ ] **43.** Default sort column in config: set which column the table sorts by on startup (depends on #36)
-- [ ] **44.** Persist hidden columns in config: save column visibility state across restarts so hidden columns stay hidden (depends on #36)
-- [ ] **45.** Default visible columns in config: define which columns are shown by default, so new columns start hidden unless opted in (depends on #36)
+- [x] **43.** Default sort column in config: set which column the table sorts by on startup (depends on #36) `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
+- [x] **44.** Persist hidden columns in config: save column visibility state across restarts so hidden columns stay hidden (depends on #36) `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
+- [x] **45.** Default visible columns in config: define which columns are shown by default, so new columns start hidden unless opted in (depends on #36) `PR-J` — [#23](https://github.com/DeanLa/cctop/pull/23)
 
 ## Activity & Status Detection
 - [ ] **53.** Classify Bash commands into sub-statuses by inspecting the command string: `testing` (pytest, jest, npm test, go test, cargo test, make test), `building` (npm build, tsc, webpack, cargo build, make, go build), `installing` (pip install, npm install, brew install, cargo add), `linting` (eslint, ruff, black, prettier, mypy), `git op` (git commit/push/pull/rebase/merge), `creating PR` (gh pr create/merge) `PR-Q`
