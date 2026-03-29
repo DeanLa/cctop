@@ -13,11 +13,11 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
 import time as _time
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
@@ -40,9 +40,78 @@ from textual.widgets.option_list import Option
 # --- Constants ---
 
 STATUS_DIR = Path.home() / ".cctop"
+CONFIG_PATH = STATUS_DIR / "config.toml"
 CONTEXT_WINDOW = 200_000
 STALE_SECONDS = 60 * 60
 HEALTH_CHECK_INTERVAL = 10.0  # seconds between ps-based health checks
+
+_CONFIG_DEFAULTS: dict = {
+    "ui": {"theme": "textual-dark"},
+    "sort": {"column": "activity", "reverse": True},
+    "columns": {"hidden": ["errors", "started", "stop_reason", "tokens"]},
+}
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge *override* into a copy of *base*."""
+    merged = dict(base)
+    for key, val in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(val, dict):
+            merged[key] = _deep_merge(merged[key], val)
+        else:
+            merged[key] = val
+    return merged
+
+
+def load_config() -> dict:
+    """Read ~/.cctop/config.toml, returning defaults for missing keys."""
+    if CONFIG_PATH.is_file():
+        try:
+            with CONFIG_PATH.open("rb") as f:
+                user = tomllib.load(f)
+            return _deep_merge(_CONFIG_DEFAULTS, user)
+        except Exception:
+            pass
+    return dict(_CONFIG_DEFAULTS)
+
+
+def save_config(updates: dict) -> None:
+    """Merge *updates* into the existing config and write back to disk."""
+    current = load_config()
+    merged = _deep_merge(current, updates)
+    STATUS_DIR.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    for section, values in merged.items():
+        if isinstance(values, dict):
+            lines.append(f"[{section}]")
+            for k, v in values.items():
+                lines.append(f'{k} = {_toml_value(v)}')
+            lines.append("")
+        else:
+            lines.append(f'{section} = {_toml_value(values)}')
+    CONFIG_PATH.write_text("\n".join(lines) + "\n")
+
+
+def _toml_value(v: object) -> str:
+    """Format a Python value as a TOML literal."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, str):
+        return f'"{v}"'
+    if isinstance(v, list):
+        return "[" + ", ".join(_toml_value(i) for i in v) + "]"
+    return f'"{v}"'
+
+
+def _reset_session_data() -> None:
+    """Delete session data files but preserve config."""
+    if not STATUS_DIR.is_dir():
+        return
+    for pattern in ("*.json", "*.poller.json", "*.debug.jsonl"):
+        for f in STATUS_DIR.glob(pattern):
+            f.unlink(missing_ok=True)
 
 
 def _plural(n: int, word: str) -> str:
@@ -914,18 +983,31 @@ class SessionsDashboard(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self._init_state()
+        self._config_loaded = False
+        cfg = load_config()
+        self.theme = cfg.get("ui", {}).get("theme", "textual-dark")
+        hidden = cfg.get("columns", {}).get("hidden", [])
+        self._init_state(hidden_columns=set(hidden))
+        sort_cfg = cfg.get("sort", {})
+        self.sort_mode = sort_cfg.get("column", "activity")
+        self.sort_reverse = sort_cfg.get("reverse", True)
         self._setup_table()
+        self._config_loaded = True
         self._schedule_refresh()
         self.set_interval(0.5, self._schedule_refresh)
 
-    def _init_state(self) -> None:
+    def watch_theme(self, new_theme: str) -> None:
+        """Persist theme choice to config whenever it changes."""
+        if getattr(self, "_config_loaded", False):
+            save_config({"ui": {"theme": new_theme}})
+
+    def _init_state(self, hidden_columns: set[str] | None = None) -> None:
         """Initialize per-instance mutable state."""
         self._sessions: list[SessionInfo] = []
         self._last_health_check: float = 0.0
         self._last_health: HealthStatus | None = None
         self._last_row_keys: list[str] = []
-        self._hidden_columns: set[str] = set()
+        self._hidden_columns: set[str] = hidden_columns or set()
 
     def _setup_table(self) -> None:
         """Configure the DataTable with columns from COLUMNS definitions."""
@@ -1016,6 +1098,12 @@ class SessionsDashboard(App):
             self.sort_reverse = fallback.reverse_sort
         else:
             self._update_subtitle()
+        self._persist_columns()
+
+    def _persist_columns(self) -> None:
+        """Save current hidden columns to config."""
+        if getattr(self, "_config_loaded", False):
+            save_config({"columns": {"hidden": sorted(self._hidden_columns)}})
 
     def action_hide_column(self) -> None:
         """Hide the currently active column."""
@@ -1198,12 +1286,21 @@ class SessionsDashboard(App):
 
     def watch_sort_mode(self, new_value: str) -> None:
         self._on_sort_changed()
+        self._persist_sort()
 
     def watch_sort_reverse(self, new_value: bool) -> None:
         self._on_sort_changed()
+        self._persist_sort()
+
+    def _persist_sort(self) -> None:
+        """Save current sort settings to config."""
+        if getattr(self, "_config_loaded", False):
+            save_config({"sort": {"column": self.sort_mode, "reverse": self.sort_reverse}})
 
     def _on_sort_changed(self) -> None:
         """Re-sort table, update header arrows, refresh subtitle."""
+        if not getattr(self, "_config_loaded", False):
+            return
         self._repopulate_table()
         self._update_sort_headers()
         self._update_subtitle()
@@ -1411,8 +1508,7 @@ class SessionsDashboard(App):
 
 if __name__ == "__main__":
     if "--reset" in sys.argv:
-        if STATUS_DIR.is_dir():
-            shutil.rmtree(STATUS_DIR)
+        _reset_session_data()
         STATUS_DIR.mkdir(parents=True, exist_ok=True)
         print("cctop: session data cleared")
     app = SessionsDashboard()

@@ -36,6 +36,7 @@ cctop gives you one screen to see all of them.
 | `r` | Force refresh |
 | `R` | Purge dead sessions (PID check + staleness fallback) |
 | `s` | Open sort picker (activity, name, status, duration, turns, tokens, tools, files, agents, errors) |
+| `ctrl+p` | Open command palette (switch theme, etc.) |
 
 ### Columns
 
@@ -89,6 +90,24 @@ The Status column shows what each session is doing right now:
 Sessions that go quiet for 1+ hour are marked stale. Sessions that end clean up after themselves. Sessions whose Claude process has exited (e.g. Ctrl+C) are automatically removed by the background poller via PID checks. Press `R` to manually purge dead sessions, or run `cctop --reset` to wipe all session data and start fresh.
 
 A health check bar may appear at the bottom of the dashboard when cctop detects a mismatch between tracked sessions and running Claude processes. This is normal if you had sessions running before installing cctop.
+
+### Configuration
+
+cctop stores settings in `~/.cctop/config.toml`. All settings are saved automatically as you use the dashboard:
+
+```toml
+[ui]
+theme = "textual-dark"   # any Textual built-in theme (ctrl+p to change)
+
+[sort]
+column = "activity"      # column key to sort by
+reverse = true           # sort direction
+
+[columns]
+hidden = []              # list of hidden column keys
+```
+
+Theme, sort, and column visibility all persist across restarts. The `--reset` flag clears session data but preserves your config.
 
 ## Troubleshooting
 

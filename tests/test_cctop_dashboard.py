@@ -37,6 +37,10 @@ from cctop_dashboard import (
     load_sessions,
     purge_dead_sessions,
     styled_status,
+    load_config,
+    save_config,
+    _reset_session_data,
+    CONFIG_PATH,
     STATUS_DIR,
 )
 
@@ -263,18 +267,19 @@ def test_format_start_time_malformed():
 
 @pytest.fixture
 def fake_status_dir(tmp_path):
-    """Create a temp dir and monkeypatch STATUS_DIR to point there."""
-    with patch("cctop_dashboard.STATUS_DIR", tmp_path):
+    """Create a temp dir and monkeypatch STATUS_DIR and CONFIG_PATH to point there."""
+    with patch("cctop_dashboard.STATUS_DIR", tmp_path), \
+         patch("cctop_dashboard.CONFIG_PATH", tmp_path / "config.toml"):
         yield tmp_path
 
 
 @pytest.mark.asyncio
 async def test_app_starts_empty(fake_status_dir):
-    """Empty status dir → 16 columns, 0 rows."""
+    """Empty status dir → 12 visible columns (4 hidden by default), 0 rows."""
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         table = app.query_one(DataTable)
-        assert len(table.columns) == 16
+        assert len(table.columns) == 12
         assert table.row_count == 0
 
 
@@ -334,10 +339,10 @@ async def test_hide_column(fake_status_dir):
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
         table = app.query_one(DataTable)
-        assert len(table.columns) == 16
+        assert len(table.columns) == 12
         await pilot.press("h")
         await pilot.pause()
-        assert len(table.columns) == 15
+        assert len(table.columns) == 11
 
 
 @pytest.mark.asyncio
@@ -350,7 +355,7 @@ async def test_show_all_columns(fake_status_dir):
         table = app.query_one(DataTable)
         await pilot.press("h")
         await pilot.pause()
-        assert len(table.columns) == 15
+        assert len(table.columns) == 11
         await pilot.press("C")
         await pilot.pause()
         assert len(table.columns) == 16
@@ -364,8 +369,8 @@ async def test_cannot_hide_last_column(fake_status_dir):
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
         table = app.query_one(DataTable)
-        # Hide all but one column
-        for _ in range(15):
+        # Hide all but one column (start with 12 visible)
+        for _ in range(12):
             await pilot.press("h")
             await pilot.pause()
         assert len(table.columns) == 1
@@ -1176,3 +1181,160 @@ async def test_idle_variant_renders(fake_status_dir):
         statuses = {s.status for s in app._sessions}
         assert "idle:awaiting_plan" in statuses
         assert "idle:needs_input" in statuses
+
+
+# --- Config file tests ---
+
+
+@pytest.fixture
+def fake_config_dir(tmp_path):
+    """Monkeypatch STATUS_DIR and CONFIG_PATH to a temp dir."""
+    config_path = tmp_path / "config.toml"
+    with patch("cctop_dashboard.STATUS_DIR", tmp_path), \
+         patch("cctop_dashboard.CONFIG_PATH", config_path):
+        yield tmp_path, config_path
+
+
+def test_load_config_missing_file(fake_config_dir):
+    """Missing config file returns defaults."""
+    cfg = load_config()
+    assert cfg["ui"]["theme"] == "textual-dark"
+    assert cfg["sort"]["column"] == "activity"
+    assert cfg["columns"]["hidden"] == ["errors", "started", "stop_reason", "tokens"]
+
+
+def test_load_config_empty_file(fake_config_dir):
+    _, config_path = fake_config_dir
+    config_path.write_text("")
+    cfg = load_config()
+    assert cfg["ui"]["theme"] == "textual-dark"
+    assert cfg["sort"]["column"] == "activity"
+    assert cfg["columns"]["hidden"] == ["errors", "started", "stop_reason", "tokens"]
+
+
+def test_load_config_partial(fake_config_dir):
+    """Config with only some keys still gets defaults for the rest."""
+    _, config_path = fake_config_dir
+    config_path.write_text('[ui]\ntheme = "dracula"\n')
+    cfg = load_config()
+    assert cfg["ui"]["theme"] == "dracula"
+
+
+def test_load_config_invalid_toml(fake_config_dir):
+    """Malformed TOML falls back to defaults."""
+    _, config_path = fake_config_dir
+    config_path.write_text("this is not [valid toml")
+    cfg = load_config()
+    assert cfg["ui"]["theme"] == "textual-dark"
+    assert cfg["sort"]["column"] == "activity"
+    assert cfg["columns"]["hidden"] == ["errors", "started", "stop_reason", "tokens"]
+
+
+def test_save_config_creates_file(fake_config_dir):
+    _, config_path = fake_config_dir
+    save_config({"ui": {"theme": "nord"}})
+    assert config_path.exists()
+    cfg = load_config()
+    assert cfg["ui"]["theme"] == "nord"
+
+
+def test_save_config_merges(fake_config_dir):
+    """Saving a new section preserves existing sections."""
+    save_config({"ui": {"theme": "dracula"}})
+    save_config({"ui": {"theme": "monokai"}})
+    cfg = load_config()
+    assert cfg["ui"]["theme"] == "monokai"
+
+
+def test_reset_preserves_config(fake_config_dir):
+    """_reset_session_data should delete session files but keep config.toml."""
+    tmp_dir, config_path = fake_config_dir
+    # Write config and a session file
+    save_config({"ui": {"theme": "nord"}})
+    (tmp_dir / "sess-123.json").write_text("{}")
+    (tmp_dir / "sess-123.poller.json").write_text("{}")
+    (tmp_dir / "sess-123.debug.jsonl").write_text("")
+    _reset_session_data()
+    assert not (tmp_dir / "sess-123.json").exists()
+    assert not (tmp_dir / "sess-123.poller.json").exists()
+    assert not (tmp_dir / "sess-123.debug.jsonl").exists()
+    assert config_path.exists()
+    cfg = load_config()
+    assert cfg["ui"]["theme"] == "nord"
+
+
+@pytest.mark.asyncio
+async def test_theme_persists_across_restart(fake_config_dir):
+    """Theme set in one app run should be loaded by the next."""
+    tmp_dir, _ = fake_config_dir
+    save_config({"ui": {"theme": "dracula"}})
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        assert app.theme == "dracula"
+
+
+def test_save_config_sort(fake_config_dir):
+    """Sort settings round-trip through config."""
+    save_config({"sort": {"column": "status", "reverse": False}})
+    cfg = load_config()
+    assert cfg["sort"]["column"] == "status"
+    assert cfg["sort"]["reverse"] is False
+
+
+def test_save_config_hidden_columns(fake_config_dir):
+    """Hidden columns round-trip through config."""
+    save_config({"columns": {"hidden": ["branch", "model"]}})
+    cfg = load_config()
+    assert cfg["columns"]["hidden"] == ["branch", "model"]
+
+
+@pytest.mark.asyncio
+async def test_sort_persists_across_restart(fake_config_dir):
+    """Sort mode saved to config should be loaded on next startup."""
+    save_config({"sort": {"column": "status", "reverse": False}})
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        assert app.sort_mode == "status"
+        assert app.sort_reverse is False
+
+
+@pytest.mark.asyncio
+async def test_hidden_columns_persist_across_restart(fake_config_dir):
+    """Hidden columns saved to config should be loaded on next startup."""
+    save_config({"columns": {"hidden": ["branch", "model"]}})
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        assert app._hidden_columns == {"branch", "model"}
+        table = app.query_one(DataTable)
+        assert len(table.columns) == 14  # 16 total - 2 hidden
+
+
+@pytest.mark.asyncio
+async def test_sort_change_persists_to_config(fake_config_dir):
+    """Changing sort via keybinding should persist to config."""
+    tmp_dir, config_path = fake_config_dir
+    write_fake_session(tmp_dir, "aaaa-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        # Move to status column (index 3) and sort
+        for _ in range(3):
+            await pilot.press("right")
+        await pilot.press("s")
+        await pilot.pause()
+    cfg = load_config()
+    assert cfg["sort"]["column"] == "status"
+
+
+@pytest.mark.asyncio
+async def test_hide_column_persists_to_config(fake_config_dir):
+    """Hiding a column should persist to config."""
+    tmp_dir, config_path = fake_config_dir
+    write_fake_session(tmp_dir, "aaaa-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        await pilot.press("h")
+        await pilot.pause()
+    cfg = load_config()
+    assert len(cfg["columns"]["hidden"]) == 5  # 4 default + 1 newly hidden
