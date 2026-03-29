@@ -47,6 +47,15 @@ from cctop_dashboard import (
 
 # --- Helpers ---
 
+def _render_table_text(table) -> str:
+    """Render a Rich Table to plain text for assertions."""
+    from rich.console import Console
+    from io import StringIO
+    buf = StringIO()
+    Console(file=buf, width=120, no_color=True).print(table)
+    return buf.getvalue()
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -97,7 +106,9 @@ def write_fake_session(tmpdir: Path, sid: str, *,
                        active_subagent_type: str = "",
                        error_type: str = "",
                        error_details: str = "",
-                       tool_failures: int = 0) -> None:
+                       tool_failures: int = 0,
+                       tmux_session: str = "",
+                       tmux_window: str = "") -> None:
     """Write a pair of hook + poller JSON files into tmpdir."""
     hook = {
         "session_id": sid,
@@ -114,6 +125,8 @@ def write_fake_session(tmpdir: Path, sid: str, *,
         "error_type": error_type,
         "error_details": error_details,
         "tool_failures": tool_failures,
+        "tmux_session": tmux_session,
+        "tmux_window": tmux_window,
     }
     if pid is not None:
         hook["pid"] = pid
@@ -407,9 +420,9 @@ async def test_detail_panel_updates(fake_status_dir):
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
-        detail = app.query_one("#detail", Static)
-        # The first row should auto-highlight and populate detail
-        rendered = _render_static_text(detail)
+        status = app.query_one("#status-left", Static)
+        # The first row should auto-highlight and populate status bar
+        rendered = _render_static_text(status)
         assert "/home/user/myproject" in rendered
 
 
@@ -696,8 +709,8 @@ async def test_detail_panel_shows_user_and_assistant(fake_status_dir):
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
-        detail = app.query_one("#detail", Static)
-        rendered = _render_static_text(detail)
+        chat = app.query_one("#detail-chat", Static)
+        rendered = _render_static_text(chat)
         assert "User" in rendered
         assert "Claude" in rendered
         assert "my user question" in rendered
@@ -711,14 +724,14 @@ async def test_detail_panel_clears_when_sessions_removed(fake_status_dir):
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
-        detail = app.query_one("#detail", Static)
+        chat = app.query_one("#detail-chat", Static)
         # Detail should have content from the highlighted session
-        assert isinstance(detail.content, Group)
+        assert isinstance(chat.content, Group)
         # Purge the dead session
         await pilot.press("R")
         await _wait_for_rows(pilot, app, expected=0)
         # Detail should now be empty
-        assert str(detail.content) == ""
+        assert str(chat.content) == ""
 
 
 # --- get_claude_pids() unit tests ---
@@ -1338,3 +1351,171 @@ async def test_hide_column_persists_to_config(fake_config_dir):
         await pilot.pause()
     cfg = load_config()
     assert len(cfg["columns"]["hidden"]) == 5  # 4 default + 1 newly hidden
+
+
+# --- Detail session info tests ---
+
+
+def test_status_bar_shows_session_id():
+    """Status bar right should include the full session ID."""
+    s = SessionInfo(
+        session_id="abc12345-6789-0def-ghij-klmnopqrstuv",
+        model="claude-opus-4-6",
+    )
+    markup = SessionsDashboard._status_right(s)
+    assert "abc12345-6789-0def-ghij-klmnopqrstuv" in markup
+
+
+def test_status_bar_shows_full_model():
+    """Status bar right should include the full model name."""
+    s = SessionInfo(
+        session_id="test-1234",
+        model="claude-opus-4-6",
+    )
+    markup = SessionsDashboard._status_right(s)
+    assert "claude-opus-4-6" in markup
+
+
+def test_status_bar_shows_path_and_branch():
+    """Status bar left should include path and branch."""
+    s = SessionInfo(
+        cwd="/Users/me/project",
+        git_branch="main",
+    )
+    markup = SessionsDashboard._status_left(s)
+    assert "/Users/me/project" in markup
+    assert "main" in markup
+
+
+def test_detail_session_info_shows_timing():
+    """Session info should include start time and duration."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        started_at=_ago_iso(90),  # 90 minutes ago
+        turns=12,
+        tool_count=45,
+    )
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "1h30m" in text
+    assert "12" in text     # Turns row
+    assert "45" in text     # Tools row
+
+
+def test_detail_session_info_shows_files_and_subagents():
+    """Session info should show files edited and subagent count."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        started_at=_ago_iso(10),
+        files_edited=["/a.py", "/b.py", "/c.py"],
+        subagent_count=2,
+    )
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "3" in text and "edited" in text
+    assert "Agents" in text and "2" in text
+
+
+def test_detail_session_info_shows_tokens():
+    """Session info should show context tokens."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        input_tokens=150000,
+    )
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "150k" in text and "ctx" in text
+
+
+def test_detail_session_info_shows_pid():
+    """Session info should show PID when available."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        pid=84726,
+    )
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "PID" in text and "84726" in text
+
+
+def test_detail_session_info_shows_tmux():
+    """Session info should show tmux session:window when available."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        tmux_session="local",
+        tmux_window="6",
+    )
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "Tmux" in text and "local:6" in text
+
+
+def test_detail_session_info_omits_tmux_when_empty():
+    """Session info should not mention tmux when not available."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+    )
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "Tmux" not in text
+
+
+def test_detail_session_info_shows_errors():
+    """Session info should show errors in red when present."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        error_count=3,
+        tool_failures=1,
+        error_details="rate_limit",
+    )
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "3 errors" in text
+    assert "1 failure" in text
+    assert "rate_limit" in text
+
+
+def test_detail_session_info_omits_errors_when_zero():
+    """Session info should not show error line when no errors."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        error_count=0,
+        tool_failures=0,
+    )
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "Errors" not in text
+    assert "failure" not in text
+
+
+@pytest.mark.asyncio
+async def test_detail_panel_includes_session_section(fake_status_dir):
+    """Detail panel should render the Session info section."""
+    write_fake_session(
+        fake_status_dir, "info-1111",
+        model="claude-sonnet-4-6-20260301",
+        pid=12345,
+        tmux_session="dev",
+        tmux_window="3",
+    )
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        # Status bar should show model + session ID
+        status_r = app.query_one("#status-right", Static)
+        status_text = _render_static_text(status_r)
+        assert "info-1111" in status_text
+        assert "claude-sonnet-4-6-20260301" in status_text
+        # Info panel should show PID, tmux
+        info = app.query_one("#detail-info", Static)
+        rendered = _render_static_text(info)
+        assert "12345" in rendered  # PID row
+        assert "dev:3" in rendered  # Tmux row

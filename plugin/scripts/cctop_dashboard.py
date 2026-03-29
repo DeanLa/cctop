@@ -25,13 +25,14 @@ from dataclasses import dataclass, field
 
 from rich.console import Group
 from rich.markdown import Markdown as RichMarkdown
+from rich.table import Table as RichTable
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.coordinate import Coordinate
 from textual.geometry import Region
 from textual.widgets import DataTable, Footer, Header, OptionList, Static
@@ -462,9 +463,9 @@ COLUMNS: tuple[ColumnDef, ...] = (
     ),
     ColumnDef(
         "errors",
-        cell=lambda s: Text(str(s.error_count), style="red") if s.error_count else "",
+        cell=lambda s: Text(str(s.error_count + s.tool_failures), style="red") if (s.error_count + s.tool_failures) else "",
         reverse_sort=True,
-        sort_key=lambda s: s.error_count,
+        sort_key=lambda s: s.error_count + s.tool_failures,
     ),
     ColumnDef(
         "turns",
@@ -933,12 +934,23 @@ class SessionsDashboard(App):
     TITLE = "Claude Sessions"
 
     CSS = """
-    #detail-scroll {
-        height: 14;
+    #status-bar {
+        height: 1;
+        background: $surface;
+    }
+    #status-left, #status-right {
+        width: 1fr;
+        padding: 0 1;
+    }
+    #detail-panels {
+        height: 12;
+    }
+    #detail-chat-scroll, #detail-info-scroll {
+        width: 1fr;
         padding: 0 1;
         color: $text-muted;
     }
-    #detail {
+    #detail-chat, #detail-info {
         height: auto;
     }
     DataTable {
@@ -978,8 +990,14 @@ class SessionsDashboard(App):
         yield Header()
         yield _CctopTable(id="table")
         yield Static("", id="health-bar")
-        with VerticalScroll(id="detail-scroll"):
-            yield Static("", id="detail")
+        with Horizontal(id="status-bar"):
+            yield Static("", id="status-left")
+            yield Static("", id="status-right")
+        with Horizontal(id="detail-panels"):
+            with VerticalScroll(id="detail-chat-scroll"):
+                yield Static("", id="detail-chat")
+            with VerticalScroll(id="detail-info-scroll"):
+                yield Static("", id="detail-info")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1430,49 +1448,93 @@ class SessionsDashboard(App):
             self._last_row_keys = new_keys
 
         if not ordered:
-            self.query_one("#detail", Static).update("")
+            self._clear_detail_panels()
 
     # --- Detail panel ----------------------------------------------------
 
     @staticmethod
-    def _detail_header(s: SessionInfo) -> str:
-        """Build the markup header line: path, branch, tokens."""
-        tokens = format_tokens(s.context_tokens)
+    def _status_left(s: SessionInfo) -> str:
+        """Markup for the left status bar: path and branch."""
         return "".join(
             p
             for p in (
                 f"[bold]{s.cwd or '?'}[/bold]",
                 f"  [cyan]{s.git_branch}[/cyan]" if s.git_branch else None,
-                f"  [dim]Tokens: {tokens}[/dim]" if tokens else None,
             )
             if p is not None
         )
 
     @staticmethod
-    def _detail_meta(s: SessionInfo) -> list[str]:
-        """Build metadata chips for the detail panel."""
-        n_files = len(s.files_edited) if s.files_edited else 0
-        return [
+    def _status_right(s: SessionInfo) -> str:
+        """Markup for the right status bar: model and session ID."""
+        chips = [
             p
             for p in (
-                f"Model: {s.model}" if s.model else None,
-                f"{_plural(n_files, 'file')} edited" if n_files else None,
-                _plural(s.subagent_count, "subagent") if s.subagent_count else None,
-                f"[red]{_plural(s.error_count, 'error')}[/red]"
-                if s.error_count
-                else None,
-                f"[red]{_plural(s.tool_failures, 'tool failure')}[/red]"
-                if s.tool_failures
-                else None,
-                f"[red]{s.error_details}[/red]"
-                if s.error_details
-                else None,
-                f"stop: {s.stop_reason}"
-                if s.stop_reason and s.stop_reason != "end_turn"
-                else None,
+                f"[cyan]{s.model}[/cyan]" if s.model else None,
+                f"[dim]{s.session_id}[/dim]",
             )
-            if p is not None
+            if p
         ]
+        return " [dim]·[/dim] ".join(chips)
+
+    @staticmethod
+    def _detail_session_info(s: SessionInfo) -> RichTable:
+        """Build a key-value table for the info panel (right)."""
+        tbl = RichTable(
+            show_header=False, show_edge=False, box=None,
+            pad_edge=False, padding=(0, 1),
+        )
+        tbl.add_column("key", style="dim", no_wrap=True)
+        tbl.add_column("val", no_wrap=True)
+
+        def _add(label: str, markup: str) -> None:
+            tbl.add_row(label, Text.from_markup(markup))
+
+        # Timing
+        start = format_start_time(s.started_at) if s.started_at else ""
+        dur = format_duration(s.started_at) if s.started_at else ""
+        if start or dur:
+            val = f"[green]{start}[/green]" if start else ""
+            if dur:
+                val += f" [green]({dur})[/green]" if val else f"[green]{dur}[/green]"
+            _add("Started", val)
+
+        # Activity
+        if s.turns:
+            _add("Turns", f"[yellow]{s.turns}[/yellow]")
+        if s.tool_count:
+            _add("Tools", f"[yellow]{s.tool_count}[/yellow]")
+        n_files = len(s.files_edited) if s.files_edited else 0
+        if n_files:
+            _add("Files", f"[yellow]{n_files}[/yellow] edited")
+        if s.subagent_count:
+            _add("Agents", f"[#af87ff]{s.subagent_count}[/#af87ff]")
+
+        # Tokens
+        ctx = format_tokens(s.context_tokens)
+        if ctx:
+            _add("Tokens", f"[cyan]{ctx}[/cyan] ctx")
+
+        # System
+        if s.pid:
+            _add("PID", f"[dim]{s.pid}[/dim]")
+        if s.tmux_session:
+            _add("Tmux", f"[dim]{s.tmux_session}:{s.tmux_window}[/dim]")
+
+        # Errors (conditional)
+        err_parts: list[str] = []
+        if s.error_count:
+            err_parts.append(f"[red bold]{_plural(s.error_count, 'error')}[/red bold]")
+        if s.tool_failures:
+            err_parts.append(f"[red bold]{_plural(s.tool_failures, 'failure')}[/red bold]")
+        if s.error_details:
+            err_parts.append(f"[red]{s.error_details}[/red]")
+        if err_parts:
+            _add("Errors", " [dim]·[/dim] ".join(err_parts))
+        if s.stop_reason and s.stop_reason != "end_turn":
+            _add("Stop", f"[dim]{s.stop_reason}[/dim]")
+
+        return tbl
 
     def _find_session(self, row_key) -> SessionInfo | None:
         """Look up a session by its table row key."""
@@ -1481,27 +1543,40 @@ class SessionsDashboard(App):
         sid = str(row_key.value)
         return next((s for s in self._sessions if s.session_id == sid), None)
 
-    def _build_detail(self, session: SessionInfo) -> Group:
-        """Assemble the Rich renderable for the detail panel."""
-        parts: list = [
-            Text.from_markup(self._detail_header(session)),
-            Text(""),
-        ]
+    @staticmethod
+    def _build_chat(session: SessionInfo) -> Group:
+        """Assemble the Rich renderable for the chat panel (left)."""
+        parts: list = []
         parts.extend(_render_message("User", session.last_user_msg, 300))
         parts.extend(_render_message("Claude", session.last_assistant_msg, 800))
-        meta = self._detail_meta(session)
-        if meta:
-            parts.append(Text.from_markup(f"[dim]Info:[/dim]   {'  '.join(meta)}"))
         return Group(*parts)
+
+    @staticmethod
+    def _build_info(session: SessionInfo) -> RichTable:
+        """Assemble the Rich renderable for the session info panel (right)."""
+        return SessionsDashboard._detail_session_info(session)
+
+    def _clear_detail_panels(self) -> None:
+        """Clear status bar and both detail panels."""
+        self.query_one("#status-left", Static).update("")
+        self.query_one("#status-right", Static).update("")
+        self.query_one("#detail-chat", Static).update("")
+        self.query_one("#detail-info", Static).update("")
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Show detail for the highlighted row."""
-        detail = self.query_one("#detail", Static)
         session = self._find_session(event.row_key)
         if session is None:
-            detail.update("")
+            self._clear_detail_panels()
             return
-        detail.update(self._build_detail(session))
+        self.query_one("#status-left", Static).update(
+            Text.from_markup(self._status_left(session))
+        )
+        self.query_one("#status-right", Static).update(
+            Text.from_markup(self._status_right(session))
+        )
+        self.query_one("#detail-chat", Static).update(self._build_chat(session))
+        self.query_one("#detail-info", Static).update(self._build_info(session))
         # Refresh footer to update binding visibility based on new selection
         self.refresh_bindings()
 
