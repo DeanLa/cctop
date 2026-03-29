@@ -47,6 +47,15 @@ from cctop_dashboard import (
 
 # --- Helpers ---
 
+def _render_table_text(table) -> str:
+    """Render a Rich Table to plain text for assertions."""
+    from rich.console import Console
+    from io import StringIO
+    buf = StringIO()
+    Console(file=buf, width=120, no_color=True).print(table)
+    return buf.getvalue()
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -411,9 +420,9 @@ async def test_detail_panel_updates(fake_status_dir):
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
-        detail = app.query_one("#detail", Static)
-        # The first row should auto-highlight and populate detail
-        rendered = _render_static_text(detail)
+        status = app.query_one("#status-left", Static)
+        # The first row should auto-highlight and populate status bar
+        rendered = _render_static_text(status)
         assert "/home/user/myproject" in rendered
 
 
@@ -700,8 +709,8 @@ async def test_detail_panel_shows_user_and_assistant(fake_status_dir):
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
-        detail = app.query_one("#detail", Static)
-        rendered = _render_static_text(detail)
+        chat = app.query_one("#detail-chat", Static)
+        rendered = _render_static_text(chat)
         assert "User" in rendered
         assert "Claude" in rendered
         assert "my user question" in rendered
@@ -715,14 +724,14 @@ async def test_detail_panel_clears_when_sessions_removed(fake_status_dir):
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
-        detail = app.query_one("#detail", Static)
+        chat = app.query_one("#detail-chat", Static)
         # Detail should have content from the highlighted session
-        assert isinstance(detail.content, Group)
+        assert isinstance(chat.content, Group)
         # Purge the dead session
         await pilot.press("R")
         await _wait_for_rows(pilot, app, expected=0)
         # Detail should now be empty
-        assert str(detail.content) == ""
+        assert str(chat.content) == ""
 
 
 # --- get_claude_pids() unit tests ---
@@ -1347,30 +1356,35 @@ async def test_hide_column_persists_to_config(fake_config_dir):
 # --- Detail session info tests ---
 
 
-def test_detail_session_info_shows_session_id():
-    """Session info section should include the full session ID."""
+def test_status_bar_shows_session_id():
+    """Status bar right should include the full session ID."""
     s = SessionInfo(
         session_id="abc12345-6789-0def-ghij-klmnopqrstuv",
         model="claude-opus-4-6",
-        last_activity=_now_iso(),
-        started_at=_ago_iso(30),
     )
-    parts = SessionsDashboard._detail_session_info(s)
-    text = " ".join(str(p) for p in parts)
-    assert "abc12345-6789-0def-ghij-klmnopqrstuv" in text
+    markup = SessionsDashboard._status_right(s)
+    assert "abc12345-6789-0def-ghij-klmnopqrstuv" in markup
 
 
-def test_detail_session_info_shows_full_model():
-    """Session info section should include the full model name."""
+def test_status_bar_shows_full_model():
+    """Status bar right should include the full model name."""
     s = SessionInfo(
         session_id="test-1234",
         model="claude-opus-4-6",
-        last_activity=_now_iso(),
-        started_at=_ago_iso(30),
     )
-    parts = SessionsDashboard._detail_session_info(s)
-    text = " ".join(str(p) for p in parts)
-    assert "claude-opus-4-6" in text
+    markup = SessionsDashboard._status_right(s)
+    assert "claude-opus-4-6" in markup
+
+
+def test_status_bar_shows_path_and_branch():
+    """Status bar left should include path and branch."""
+    s = SessionInfo(
+        cwd="/Users/me/project",
+        git_branch="main",
+    )
+    markup = SessionsDashboard._status_left(s)
+    assert "/Users/me/project" in markup
+    assert "main" in markup
 
 
 def test_detail_session_info_shows_timing():
@@ -1382,12 +1396,11 @@ def test_detail_session_info_shows_timing():
         turns=12,
         tool_count=45,
     )
-    parts = SessionsDashboard._detail_session_info(s)
-    text = " ".join(str(p) for p in parts)
-    assert "Started" in text
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
     assert "1h30m" in text
-    assert "12 turns" in text
-    assert "45 tools" in text
+    assert "12" in text     # Turns row
+    assert "45" in text     # Tools row
 
 
 def test_detail_session_info_shows_files_and_subagents():
@@ -1399,25 +1412,22 @@ def test_detail_session_info_shows_files_and_subagents():
         files_edited=["/a.py", "/b.py", "/c.py"],
         subagent_count=2,
     )
-    parts = SessionsDashboard._detail_session_info(s)
-    text = " ".join(str(p) for p in parts)
-    assert "3 files edited" in text
-    assert "2 subagents" in text
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "3" in text and "edited" in text
+    assert "Agents" in text and "2" in text
 
 
 def test_detail_session_info_shows_tokens():
-    """Session info should show context and cumulative tokens."""
+    """Session info should show context tokens."""
     s = SessionInfo(
         session_id="test-1234",
         last_activity=_now_iso(),
         input_tokens=150000,
-        cumulative_input_tokens=500000,
-        cumulative_output_tokens=100000,
     )
-    parts = SessionsDashboard._detail_session_info(s)
-    text = " ".join(str(p) for p in parts)
-    assert "150k ctx" in text
-    assert "600k total" in text
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "150k" in text and "ctx" in text
 
 
 def test_detail_session_info_shows_pid():
@@ -1427,9 +1437,9 @@ def test_detail_session_info_shows_pid():
         last_activity=_now_iso(),
         pid=84726,
     )
-    parts = SessionsDashboard._detail_session_info(s)
-    text = " ".join(str(p) for p in parts)
-    assert "PID 84726" in text
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "PID" in text and "84726" in text
 
 
 def test_detail_session_info_shows_tmux():
@@ -1440,9 +1450,9 @@ def test_detail_session_info_shows_tmux():
         tmux_session="local",
         tmux_window="6",
     )
-    parts = SessionsDashboard._detail_session_info(s)
-    text = " ".join(str(p) for p in parts)
-    assert "tmux local:6" in text
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "Tmux" in text and "local:6" in text
 
 
 def test_detail_session_info_omits_tmux_when_empty():
@@ -1451,9 +1461,9 @@ def test_detail_session_info_omits_tmux_when_empty():
         session_id="test-1234",
         last_activity=_now_iso(),
     )
-    parts = SessionsDashboard._detail_session_info(s)
-    text = " ".join(str(p) for p in parts)
-    assert "tmux" not in text
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "Tmux" not in text
 
 
 def test_detail_session_info_shows_errors():
@@ -1465,10 +1475,10 @@ def test_detail_session_info_shows_errors():
         tool_failures=1,
         error_details="rate_limit",
     )
-    parts = SessionsDashboard._detail_session_info(s)
-    text = " ".join(str(p) for p in parts)
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
     assert "3 errors" in text
-    assert "1 tool failure" in text
+    assert "1 failure" in text
     assert "rate_limit" in text
 
 
@@ -1480,9 +1490,9 @@ def test_detail_session_info_omits_errors_when_zero():
         error_count=0,
         tool_failures=0,
     )
-    parts = SessionsDashboard._detail_session_info(s)
-    text = " ".join(str(p) for p in parts)
-    assert "error" not in text
+    tbl = SessionsDashboard._detail_session_info(s)
+    text = _render_table_text(tbl)
+    assert "Errors" not in text
     assert "failure" not in text
 
 
@@ -1499,10 +1509,13 @@ async def test_detail_panel_includes_session_section(fake_status_dir):
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
-        detail = app.query_one("#detail", Static)
-        rendered = _render_static_text(detail)
-        assert "Session:" in rendered
-        assert "info-1111" in rendered
-        assert "claude-sonnet-4-6-20260301" in rendered
-        assert "PID 12345" in rendered
-        assert "tmux dev:3" in rendered
+        # Status bar should show model + session ID
+        status_r = app.query_one("#status-right", Static)
+        status_text = _render_static_text(status_r)
+        assert "info-1111" in status_text
+        assert "claude-sonnet-4-6-20260301" in status_text
+        # Info panel should show PID, tmux
+        info = app.query_one("#detail-info", Static)
+        rendered = _render_static_text(info)
+        assert "12345" in rendered  # PID row
+        assert "dev:3" in rendered  # Tmux row
