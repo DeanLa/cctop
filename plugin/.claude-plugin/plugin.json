@@ -1,6 +1,6 @@
 {
   "name": "cctop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Live TUI dashboard for monitoring all active Claude Code sessions, status, context usage, tokens, and latest messages at a glance.",
   "author": {
     "name": "Dean Langsam",
