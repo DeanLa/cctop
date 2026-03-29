@@ -97,7 +97,9 @@ def write_fake_session(tmpdir: Path, sid: str, *,
                        active_subagent_type: str = "",
                        error_type: str = "",
                        error_details: str = "",
-                       tool_failures: int = 0) -> None:
+                       tool_failures: int = 0,
+                       tmux_session: str = "",
+                       tmux_window: str = "") -> None:
     """Write a pair of hook + poller JSON files into tmpdir."""
     hook = {
         "session_id": sid,
@@ -114,6 +116,8 @@ def write_fake_session(tmpdir: Path, sid: str, *,
         "error_type": error_type,
         "error_details": error_details,
         "tool_failures": tool_failures,
+        "tmux_session": tmux_session,
+        "tmux_window": tmux_window,
     }
     if pid is not None:
         hook["pid"] = pid
@@ -1338,3 +1342,167 @@ async def test_hide_column_persists_to_config(fake_config_dir):
         await pilot.pause()
     cfg = load_config()
     assert len(cfg["columns"]["hidden"]) == 5  # 4 default + 1 newly hidden
+
+
+# --- Detail session info tests ---
+
+
+def test_detail_session_info_shows_session_id():
+    """Session info section should include the full session ID."""
+    s = SessionInfo(
+        session_id="abc12345-6789-0def-ghij-klmnopqrstuv",
+        model="claude-opus-4-6",
+        last_activity=_now_iso(),
+        started_at=_ago_iso(30),
+    )
+    parts = SessionsDashboard._detail_session_info(s)
+    text = " ".join(str(p) for p in parts)
+    assert "abc12345-6789-0def-ghij-klmnopqrstuv" in text
+
+
+def test_detail_session_info_shows_full_model():
+    """Session info section should include the full model name."""
+    s = SessionInfo(
+        session_id="test-1234",
+        model="claude-opus-4-6",
+        last_activity=_now_iso(),
+        started_at=_ago_iso(30),
+    )
+    parts = SessionsDashboard._detail_session_info(s)
+    text = " ".join(str(p) for p in parts)
+    assert "claude-opus-4-6" in text
+
+
+def test_detail_session_info_shows_timing():
+    """Session info should include start time and duration."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        started_at=_ago_iso(90),  # 90 minutes ago
+        turns=12,
+        tool_count=45,
+    )
+    parts = SessionsDashboard._detail_session_info(s)
+    text = " ".join(str(p) for p in parts)
+    assert "Started" in text
+    assert "1h30m" in text
+    assert "12 turns" in text
+    assert "45 tools" in text
+
+
+def test_detail_session_info_shows_files_and_subagents():
+    """Session info should show files edited and subagent count."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        started_at=_ago_iso(10),
+        files_edited=["/a.py", "/b.py", "/c.py"],
+        subagent_count=2,
+    )
+    parts = SessionsDashboard._detail_session_info(s)
+    text = " ".join(str(p) for p in parts)
+    assert "3 files edited" in text
+    assert "2 subagents" in text
+
+
+def test_detail_session_info_shows_tokens():
+    """Session info should show context and cumulative tokens."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        input_tokens=150000,
+        cumulative_input_tokens=500000,
+        cumulative_output_tokens=100000,
+    )
+    parts = SessionsDashboard._detail_session_info(s)
+    text = " ".join(str(p) for p in parts)
+    assert "150k ctx" in text
+    assert "600k total" in text
+
+
+def test_detail_session_info_shows_pid():
+    """Session info should show PID when available."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        pid=84726,
+    )
+    parts = SessionsDashboard._detail_session_info(s)
+    text = " ".join(str(p) for p in parts)
+    assert "PID 84726" in text
+
+
+def test_detail_session_info_shows_tmux():
+    """Session info should show tmux session:window when available."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        tmux_session="local",
+        tmux_window="6",
+    )
+    parts = SessionsDashboard._detail_session_info(s)
+    text = " ".join(str(p) for p in parts)
+    assert "tmux local:6" in text
+
+
+def test_detail_session_info_omits_tmux_when_empty():
+    """Session info should not mention tmux when not available."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+    )
+    parts = SessionsDashboard._detail_session_info(s)
+    text = " ".join(str(p) for p in parts)
+    assert "tmux" not in text
+
+
+def test_detail_session_info_shows_errors():
+    """Session info should show errors in red when present."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        error_count=3,
+        tool_failures=1,
+        error_details="rate_limit",
+    )
+    parts = SessionsDashboard._detail_session_info(s)
+    text = " ".join(str(p) for p in parts)
+    assert "3 errors" in text
+    assert "1 tool failure" in text
+    assert "rate_limit" in text
+
+
+def test_detail_session_info_omits_errors_when_zero():
+    """Session info should not show error line when no errors."""
+    s = SessionInfo(
+        session_id="test-1234",
+        last_activity=_now_iso(),
+        error_count=0,
+        tool_failures=0,
+    )
+    parts = SessionsDashboard._detail_session_info(s)
+    text = " ".join(str(p) for p in parts)
+    assert "error" not in text
+    assert "failure" not in text
+
+
+@pytest.mark.asyncio
+async def test_detail_panel_includes_session_section(fake_status_dir):
+    """Detail panel should render the Session info section."""
+    write_fake_session(
+        fake_status_dir, "info-1111",
+        model="claude-sonnet-4-6-20260301",
+        pid=12345,
+        tmux_session="dev",
+        tmux_window="3",
+    )
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        detail = app.query_one("#detail", Static)
+        rendered = _render_static_text(detail)
+        assert "Session:" in rendered
+        assert "info-1111" in rendered
+        assert "claude-sonnet-4-6-20260301" in rendered
+        assert "PID 12345" in rendered
+        assert "tmux dev:3" in rendered
