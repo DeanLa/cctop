@@ -32,6 +32,9 @@ from cctop_dashboard import (
     friendly_model_name,
     format_start_time,
     format_stop_reason,
+    format_cost,
+    _calc_cost,
+    _get_pricing,
     get_claude_pids,
     check_session_health,
     load_sessions,
@@ -89,6 +92,12 @@ def write_fake_session(tmpdir: Path, sid: str, *,
                        tool_count: int = 10,
                        cum_input: int = 50000,
                        cum_output: int = 20000,
+                       cum_cache_read: int = 0,
+                       cum_cache_creation: int = 0,
+                       sub_input: int = 0,
+                       sub_output: int = 0,
+                       sub_cache_read: int = 0,
+                       sub_cache_creation: int = 0,
                        last_user_msg: str = "hello",
                        last_assistant_msg: str = "world",
                        error_count: int = 0,
@@ -107,6 +116,7 @@ def write_fake_session(tmpdir: Path, sid: str, *,
                        error_type: str = "",
                        error_details: str = "",
                        tool_failures: int = 0,
+                       effort_level: str = "",
                        tmux_session: str = "",
                        tmux_window: str = "") -> None:
     """Write a pair of hook + poller JSON files into tmpdir."""
@@ -144,12 +154,17 @@ def write_fake_session(tmpdir: Path, sid: str, *,
         "custom_title": custom_title,
         "cumulative_input_tokens": cum_input,
         "cumulative_output_tokens": cum_output,
-        "subagent_input_tokens": 0,
-        "subagent_output_tokens": 0,
+        "cumulative_cache_read_tokens": cum_cache_read,
+        "cumulative_cache_creation_tokens": cum_cache_creation,
+        "subagent_input_tokens": sub_input,
+        "subagent_output_tokens": sub_output,
+        "subagent_cache_read_tokens": sub_cache_read,
+        "subagent_cache_creation_tokens": sub_cache_creation,
         "error_count": error_count,
         "subagent_count": subagent_count,
         "files_edited": files_edited,
         "stop_reason": "",
+        "effort_level": effort_level,
     }
     (tmpdir / f"{sid}.poller.json").write_text(json.dumps(poller))
 
@@ -371,7 +386,7 @@ async def test_show_all_columns(fake_status_dir):
         assert len(table.columns) == 11
         await pilot.press("C")
         await pilot.pause()
-        assert len(table.columns) == 16
+        assert len(table.columns) == 18
 
 
 @pytest.mark.asyncio
@@ -1213,7 +1228,7 @@ def test_load_config_missing_file(fake_config_dir):
     cfg = load_config()
     assert cfg["ui"]["theme"] == "textual-dark"
     assert cfg["sort"]["column"] == "activity"
-    assert cfg["columns"]["hidden"] == ["errors", "started", "stop_reason", "tokens"]
+    assert cfg["columns"]["hidden"] == ["errors", "started", "stop_reason", "tokens", "effort", "cost"]
 
 
 def test_load_config_empty_file(fake_config_dir):
@@ -1222,7 +1237,7 @@ def test_load_config_empty_file(fake_config_dir):
     cfg = load_config()
     assert cfg["ui"]["theme"] == "textual-dark"
     assert cfg["sort"]["column"] == "activity"
-    assert cfg["columns"]["hidden"] == ["errors", "started", "stop_reason", "tokens"]
+    assert cfg["columns"]["hidden"] == ["errors", "started", "stop_reason", "tokens", "effort", "cost"]
 
 
 def test_load_config_partial(fake_config_dir):
@@ -1240,7 +1255,7 @@ def test_load_config_invalid_toml(fake_config_dir):
     cfg = load_config()
     assert cfg["ui"]["theme"] == "textual-dark"
     assert cfg["sort"]["column"] == "activity"
-    assert cfg["columns"]["hidden"] == ["errors", "started", "stop_reason", "tokens"]
+    assert cfg["columns"]["hidden"] == ["errors", "started", "stop_reason", "tokens", "effort", "cost"]
 
 
 def test_save_config_creates_file(fake_config_dir):
@@ -1319,7 +1334,7 @@ async def test_hidden_columns_persist_across_restart(fake_config_dir):
     async with app.run_test() as pilot:
         assert app._hidden_columns == {"branch", "model"}
         table = app.query_one(DataTable)
-        assert len(table.columns) == 14  # 16 total - 2 hidden
+        assert len(table.columns) == 16  # 18 total - 2 hidden
 
 
 @pytest.mark.asyncio
@@ -1350,7 +1365,7 @@ async def test_hide_column_persists_to_config(fake_config_dir):
         await pilot.press("h")
         await pilot.pause()
     cfg = load_config()
-    assert len(cfg["columns"]["hidden"]) == 5  # 4 default + 1 newly hidden
+    assert len(cfg["columns"]["hidden"]) == 7  # 6 default + 1 newly hidden
 
 
 # --- Detail session info tests ---
@@ -1519,3 +1534,156 @@ async def test_detail_panel_includes_session_section(fake_status_dir):
         rendered = _render_static_text(info)
         assert "12345" in rendered  # PID row
         assert "dev:3" in rendered  # Tmux row
+
+
+# --- format_cost tests ---
+
+def test_format_cost_zero():
+    assert format_cost(0.0) == ""
+
+
+def test_format_cost_small():
+    assert format_cost(0.003) == ""
+
+
+def test_format_cost_normal():
+    assert format_cost(1.23) == "$1.23"
+
+
+def test_format_cost_large():
+    assert format_cost(12.5) == "$12.50"
+
+
+# --- _get_pricing tests ---
+
+def test_get_pricing_sonnet():
+    p = _get_pricing("claude-sonnet-4-6-20260301")
+    assert p["input"] == 3.0
+    assert p["output"] == 15.0
+
+
+def test_get_pricing_opus():
+    p = _get_pricing("claude-opus-4-6-v1[1m]")
+    assert p["input"] == 5.0
+    assert p["output"] == 25.0
+
+
+def test_get_pricing_unknown_falls_back():
+    p = _get_pricing("some-unknown-model")
+    assert p["input"] == 3.0  # fallback is sonnet-tier
+
+
+# --- _calc_cost tests ---
+
+def test_calc_cost_basic():
+    """Verify cost calculation with known token values."""
+    s = SessionInfo(
+        model="claude-sonnet-4-6-20260301",
+        cumulative_input_tokens=1_000_000,  # 1M input → $3.00
+        cumulative_output_tokens=100_000,   # 100k output → $1.50
+    )
+    cost = _calc_cost(s)
+    assert abs(cost - 4.50) < 0.01
+
+
+def test_calc_cost_with_cache():
+    """Cache tokens should use cache pricing."""
+    s = SessionInfo(
+        model="claude-sonnet-4-6-20260301",
+        cumulative_input_tokens=0,
+        cumulative_output_tokens=0,
+        cumulative_cache_read_tokens=1_000_000,     # 1M cache read → $0.30
+        cumulative_cache_creation_tokens=1_000_000,  # 1M cache write → $3.75
+    )
+    cost = _calc_cost(s)
+    assert abs(cost - 4.05) < 0.01
+
+
+def test_calc_cost_includes_subagent():
+    """Subagent tokens should be included in total cost."""
+    s = SessionInfo(
+        model="claude-sonnet-4-6-20260301",
+        cumulative_input_tokens=1_000_000,
+        subagent_input_tokens=1_000_000,
+    )
+    cost = _calc_cost(s)
+    # Both main and subagent: 2 * $3.00 = $6.00
+    assert abs(cost - 6.0) < 0.01
+
+
+# --- Poller effort extraction tests ---
+
+def _load_poller_module():
+    """Import cctop-poller.py (hyphenated filename requires importlib)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "cctop_poller",
+        Path(__file__).resolve().parent.parent / "plugin" / "scripts" / "cctop-poller.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_poller_extracts_effort_level():
+    """Poller should extract effort level from /effort commands in transcript."""
+    parse_new_lines = _load_poller_module().parse_new_lines
+
+    effort_line = json.dumps({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": "<command-name>/effort</command-name>\n<command-message>effort</command-message>\n<command-args>high</command-args>",
+        },
+    })
+    result = parse_new_lines([effort_line])
+    assert result.get("effort_level") == "high"
+
+
+def test_poller_effort_latest_wins():
+    """If multiple /effort commands, the last one wins."""
+    parse_new_lines = _load_poller_module().parse_new_lines
+
+    lines = [
+        json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": "<command-name>/effort</command-name>\n<command-message>effort</command-message>\n<command-args>low</command-args>"},
+        }),
+        json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": "<command-name>/effort</command-name>\n<command-message>effort</command-message>\n<command-args>high</command-args>"},
+        }),
+    ]
+    result = parse_new_lines(lines)
+    assert result.get("effort_level") == "high"
+
+
+# --- TUI effort/cost column tests ---
+
+@pytest.mark.asyncio
+async def test_effort_column_renders(fake_status_dir):
+    """Effort column should display the effort level in the detail panel."""
+    write_fake_session(fake_status_dir, "effort-1111", effort_level="high")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        info = app.query_one("#detail-info", Static)
+        rendered = _render_static_text(info)
+        assert "high" in rendered
+
+
+@pytest.mark.asyncio
+async def test_cost_in_detail_panel(fake_status_dir):
+    """Cost should appear in the detail panel when tokens are non-zero."""
+    write_fake_session(
+        fake_status_dir, "cost-1111",
+        cum_input=1_000_000,
+        cum_output=100_000,
+        model="claude-sonnet-4-6-20260301",
+    )
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        info = app.query_one("#detail-info", Static)
+        rendered = _render_static_text(info)
+        assert "$" in rendered
