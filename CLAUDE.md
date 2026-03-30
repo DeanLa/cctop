@@ -70,13 +70,27 @@ After editing any file under `plugin/`, you **must** reinstall:
 Use `release.sh` for version bumps and tagging. The script handles the mechanical parts, you write the changelog.
 
 1. `./release.sh bump <version>` — updates `plugin.json`, prints git log since last tag
-2. Read the git log output and write a human-readable `CHANGELOG.md` entry. Summarize what changed from the user's perspective (new features, bug fixes, improvements). Prepend the new entry to the file. Use format: `## vX.Y.Z — YYYY-MM-DD`
+2. Read the git log output and write a human-readable `CHANGELOG.md` entry. Prepend the new entry to the file. Use format: `## vX.Y.Z — YYYY-MM-DD`
+   - Group features into thematic subgroups with punchy headers (e.g. "Status Detection, Know What Every Session Is Actually Doing")
+   - Focus on what changed for the user, not implementation details (no config file paths, hook event names, or keybindings)
+   - No self-praise or hype ("major upgrade", "significant improvement"), just describe what's new
+   - Cross-reference `plans/pr-groups.md` and `BACKLOG.md` to make sure nothing is missed
 3. `git add plugin/.claude-plugin/plugin.json CHANGELOG.md`
 4. `./release.sh tag` — commits, tags, pushes
 
 ## Writing Style
 
 - Use commas instead of emdashes (—) in prose
+
+### Hebrew Announcements
+
+When writing Hebrew-facing text (release announcements, social posts, community messages):
+
+- **Casual, grounded, anti-hype.** No self-praise. "כמה שדרוגים" not "שדרוג רציני". Relatable openers ("כמו כולם, גם אני הבנתי ש..."). Say what it's NOT to anchor expectations ("זה לא orchestrator, זה לא prompt manager. זה פשוט...").
+- **Transliterate tech terms to Hebrew:** לייאאוט, מטאדאטה, סשנים, דשבורד, ת'מת, צ'אט, גרנולריות, פרסונליזציה. Keep actual code/UI terms in English (editing, session, permission, TMUX).
+- **Structure:** short intro line, bold feature headers with dash then explanation, bullet lists for sub-features, casual sign-off ("יאללה, בואו לנסות").
+- **No implementation details.** Focus on what changed for the user, not config paths or keybindings.
+- **Credit contributors by name.**
 
 ## Security
 
