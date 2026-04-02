@@ -5,8 +5,6 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
 ## Table & Columns
 - [ ] **6.** Group/collapse sessions by project directory `PR-M`
-- [ ] **49.** Add `Effort` column showing the model's reasoning effort level (the setting controlled by `/effort` in Claude Code, e.g. low/medium/high) `PR-O`
-- [ ] **50.** Add `Cost` column showing estimated session cost, replicate the token-based cost calculation from `claude-cost` natively within cctop (don't shell out to the script) `PR-O`
 
 ## Detail Panel
 - [ ] **14.** Parse system-injected user messages (e.g. `<task-notification>`) and display them nicely, show "Subagent completed: <summary>" instead of hiding them entirely `PR-H`
@@ -27,6 +25,10 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **72.** Group-by option: model, group sessions by their Claude model
 - [ ] **73.** Group-by option: renamed/not-renamed, group sessions by whether they have a custom title
 - [ ] **42.** Configurable column display order: allow users to reorder columns via config (depends on #36)
+- [ ] **74.** Keyboard shortcuts help: press `?` to open an overlay listing all available keybindings with descriptions
+- [ ] **75.** Totals/summary bar: show aggregate metrics across all visible sessions (total cost, total tokens, session count) with breakdowns by model and project
+- [ ] **76.** Session filtering: filter table rows by project, model, status, or other column values (e.g. a filter bar or `/` search)
+- [ ] **77.** Full-screen session detail: expand selected session into a dedicated scrollable view with complete message history, activity feed, and all metadata
 
 ## Activity & Status Detection
 - [ ] **53.** Classify Bash commands into sub-statuses by inspecting the command string: `testing` (pytest, jest, npm test, go test, cargo test, make test), `building` (npm build, tsc, webpack, cargo build, make, go build), `installing` (pip install, npm install, brew install, cargo add), `linting` (eslint, ruff, black, prettier, mypy), `git op` (git commit/push/pull/rebase/merge), `creating PR` (gh pr create/merge) `PR-Q`
@@ -92,3 +94,5 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [x] **35.** Session metadata section: display relevant metadata from the session-status JSON `PR-N` — [#24](https://github.com/DeanLa/cctop/pull/24)
 - [x] **51.** Show full session ID in the detail panel, not displayed anywhere in the UI currently `PR-N` — [#24](https://github.com/DeanLa/cctop/pull/24)
 - [x] **52.** Show full (untruncated) model name in the detail panel, the table column truncates long model identifiers but the detail view should show the complete string `PR-N` — [#24](https://github.com/DeanLa/cctop/pull/24)
+- [x] **49.** Add `Effort` column showing the model's reasoning effort level (the setting controlled by `/effort` in Claude Code, e.g. low/medium/high) `PR-O` — [#28](https://github.com/DeanLa/cctop/pull/28)
+- [x] **50.** Add `Cost` column showing estimated session cost, replicate the token-based cost calculation from `claude-cost` natively within cctop (don't shell out to the script) `PR-O` — [#28](https://github.com/DeanLa/cctop/pull/28)
