@@ -50,6 +50,7 @@ _CONFIG_DEFAULTS: dict = {
     "ui": {"theme": "textual-dark"},
     "sort": {"column": "activity", "reverse": True},
     "columns": {"hidden": ["errors", "started", "stop_reason", "tokens", "effort", "cost"]},
+    "group": {"by": ""},
 }
 
 
@@ -1205,6 +1206,7 @@ class SessionsDashboard(App):
         sort_cfg = cfg.get("sort", {})
         self.sort_mode = sort_cfg.get("column", "activity")
         self.sort_reverse = sort_cfg.get("reverse", True)
+        self.group_by = cfg.get("group", {}).get("by", "")
         self._setup_table()
         self._config_loaded = True
         self._schedule_refresh()
@@ -1529,6 +1531,12 @@ class SessionsDashboard(App):
         self._collapsed_groups.clear()
         self._repopulate_table()
         self._update_subtitle()
+        self._persist_group()
+
+    def _persist_group(self) -> None:
+        """Save current group-by setting to config."""
+        if getattr(self, "_config_loaded", False):
+            save_config({"group": {"by": self.group_by}})
 
     def _persist_sort(self) -> None:
         """Save current sort settings to config."""
