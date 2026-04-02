@@ -16,13 +16,14 @@ Poller-owned fields: slug, custom_title, git_branch, project_name, model, last_u
   cumulative_output_tokens, cumulative_cache_read_tokens,
   cumulative_cache_creation_tokens, subagent_input_tokens,
   subagent_output_tokens, subagent_cache_read_tokens,
-  subagent_cache_creation_tokens
+  subagent_cache_creation_tokens, effort_level
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import tempfile
@@ -30,6 +31,7 @@ import time
 from pathlib import Path
 
 STATUS_DIR = Path.home() / ".cctop"
+SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 POLL_INTERVAL = 1.0
 
 _shutdown = False
@@ -42,6 +44,15 @@ def _handle_signal(signum, frame):
 
 signal.signal(signal.SIGTERM, _handle_signal)
 signal.signal(signal.SIGINT, _handle_signal)
+
+
+def _read_global_effort() -> str:
+    """Read the default effort level from ~/.claude/settings.json."""
+    try:
+        data = json.loads(SETTINGS_PATH.read_text())
+        return data.get("effortLevel", "")
+    except (OSError, json.JSONDecodeError):
+        return ""
 
 
 # --- JSONL parsing ---
@@ -98,9 +109,15 @@ def parse_new_lines(lines: list[str]) -> dict:
 
         if msg_type == "user":
             content = message.get("content", "")
-            if isinstance(content, str) and content and not content.startswith("<"):
-                turns_delta += 1
-                updates["last_user_msg"] = content
+            if isinstance(content, str) and content:
+                # Extract effort level from /effort commands
+                if "<command-name>/effort</command-name>" in content:
+                    m = re.search(r"<command-args>(\w+)</command-args>", content)
+                    if m:
+                        updates["effort_level"] = m.group(1)
+                elif not content.startswith("<"):
+                    turns_delta += 1
+                    updates["last_user_msg"] = content
 
         elif msg_type == "assistant":
             content = message.get("content")
@@ -535,6 +552,13 @@ def poll_once() -> None:
         )
 
         changed = False
+
+        # Seed effort level from global settings on first poll
+        if "effort_level" not in poller_data:
+            effort = _read_global_effort()
+            if effort:
+                poller_data["effort_level"] = effort
+                changed = True
 
         # After a full re-read, freeze existing counters so the full-file
         # deltas don't double-count accumulated values.

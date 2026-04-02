@@ -49,7 +49,7 @@ HEALTH_CHECK_INTERVAL = 10.0  # seconds between ps-based health checks
 _CONFIG_DEFAULTS: dict = {
     "ui": {"theme": "textual-dark"},
     "sort": {"column": "activity", "reverse": True},
-    "columns": {"hidden": ["errors", "started", "stop_reason", "tokens"]},
+    "columns": {"hidden": ["errors", "started", "stop_reason", "tokens", "effort", "cost"]},
 }
 
 
@@ -277,6 +277,51 @@ def format_tokens(total: int) -> str:
     return f"{total // 1000}k"
 
 
+# Pricing per 1M tokens (from Anthropic published rates)
+_PRICING: dict[str, dict[str, float]] = {
+    "opus-4-6":   {"input": 5.0,   "output": 25.0,  "cache_write": 6.25,  "cache_read": 0.50},
+    "opus-4-5":   {"input": 5.0,   "output": 25.0,  "cache_write": 6.25,  "cache_read": 0.50},
+    "opus-4-1":   {"input": 15.0,  "output": 75.0,  "cache_write": 18.75, "cache_read": 1.50},
+    "sonnet-4-6": {"input": 3.0,   "output": 15.0,  "cache_write": 3.75,  "cache_read": 0.30},
+    "sonnet-4-5": {"input": 3.0,   "output": 15.0,  "cache_write": 3.75,  "cache_read": 0.30},
+    "haiku-4-5":  {"input": 1.0,   "output": 5.0,   "cache_write": 1.25,  "cache_read": 0.10},
+}
+
+_PRICING_FALLBACK = {"input": 3.0, "output": 15.0, "cache_write": 3.75, "cache_read": 0.30}
+
+
+def _get_pricing(model: str) -> dict[str, float]:
+    """Match a model string like 'claude-sonnet-4-6-20260301' to a pricing tier."""
+    m = re.match(r"claude-(\w+-\d+-\d+)", model)
+    key = m.group(1) if m else ""
+    return _PRICING.get(key, _PRICING_FALLBACK)
+
+
+def _calc_cost(s: SessionInfo) -> float:
+    """Compute estimated session cost in dollars (main + subagent tokens)."""
+    p = _get_pricing(s.model)
+    main = (
+        s.cumulative_input_tokens * p["input"]
+        + s.cumulative_output_tokens * p["output"]
+        + s.cumulative_cache_creation_tokens * p["cache_write"]
+        + s.cumulative_cache_read_tokens * p["cache_read"]
+    ) / 1e6
+    sub = (
+        s.subagent_input_tokens * p["input"]
+        + s.subagent_output_tokens * p["output"]
+        + s.subagent_cache_creation_tokens * p["cache_write"]
+        + s.subagent_cache_read_tokens * p["cache_read"]
+    ) / 1e6
+    return main + sub
+
+
+def format_cost(cost: float) -> str:
+    """Format a cost value as $X.XX, or empty for zero."""
+    if cost < 0.005:
+        return ""
+    return f"${cost:.2f}"
+
+
 # --- Data structures ---
 
 
@@ -323,6 +368,7 @@ class SessionInfo:
     error_type: str = ""
     error_details: str = ""
     tool_failures: int = 0
+    effort_level: str = ""
 
     @property
     def context_tokens(self) -> int:
@@ -474,6 +520,17 @@ COLUMNS: tuple[ColumnDef, ...] = (
         sort_key=lambda s: s.turns,
     ),
     ColumnDef(
+        "effort",
+        cell=lambda s: s.effort_level or "",
+        sort_key=lambda s: s.effort_level.lower(),
+    ),
+    ColumnDef(
+        "cost",
+        cell=lambda s: format_cost(_calc_cost(s)),
+        reverse_sort=True,
+        sort_key=lambda s: _calc_cost(s),
+    ),
+    ColumnDef(
         "stop_reason",
         header="StopRsn",
         cell=lambda s: format_stop_reason(s.stop_reason),
@@ -572,6 +629,7 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         subagent_output_tokens=poller.get("subagent_output_tokens", 0),
         subagent_cache_read_tokens=poller.get("subagent_cache_read_tokens", 0),
         subagent_cache_creation_tokens=poller.get("subagent_cache_creation_tokens", 0),
+        effort_level=poller.get("effort_level", ""),
         # Poller preferred, hook fallback
         tool_count=poller.get("tool_count", 0) or hook.get("tool_count", 0),
         model=poller.get("model", "") or hook.get("model", ""),
@@ -1514,6 +1572,13 @@ class SessionsDashboard(App):
         ctx = format_tokens(s.context_tokens)
         if ctx:
             _add("Tokens", f"[cyan]{ctx}[/cyan] ctx")
+
+        # Metrics
+        if s.effort_level:
+            _add("Effort", f"[yellow]{s.effort_level}[/yellow]")
+        cost = _calc_cost(s)
+        if cost >= 0.005:
+            _add("Cost", f"[cyan]{format_cost(cost)}[/cyan]")
 
         # System
         if s.pid:
