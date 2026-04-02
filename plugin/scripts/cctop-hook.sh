@@ -63,10 +63,38 @@ LAST_TOOL=$(echo "$EXISTING" | jq -r '.last_tool // ""' 2>/dev/null)
 # Planning mode: read current state, updated per event below
 PLANNING_MODE=$(echo "$EXISTING" | jq -r '.planning_mode // false' 2>/dev/null)
 
-# Extract subagent_type from Agent tool's tool_input (only when needed)
+# Extract subagent_type and status_context from tool_input (PreToolUse only)
 SUBAGENT_TYPE=""
-if [ "$EVENT" = "PreToolUse" ] && [ "$TOOL" = "Agent" ]; then
-    SUBAGENT_TYPE=$(echo "$input" | jq -r '.tool_input.subagent_type // ""' 2>/dev/null)
+STATUS_CONTEXT=""
+if [ "$EVENT" = "PreToolUse" ]; then
+    STATUS_CONTEXT=$(echo "$input" | jq -r --arg tool "$TOOL" '
+        if $tool == "Edit" or $tool == "Write" or $tool == "Read" or $tool == "NotebookEdit" then
+            (.tool_input.file_path // "")
+        elif $tool == "Bash" then
+            ((.tool_input.description // (.tool_input.command // ""))[:120])
+        elif $tool == "WebSearch" then
+            (.tool_input.query // "")
+        elif $tool == "WebFetch" then
+            (.tool_input.url // "")
+        elif $tool == "Grep" or $tool == "Glob" then
+            (.tool_input.pattern // "")
+        elif $tool == "Agent" then
+            (.tool_input.description // "")
+        elif $tool == "AskUserQuestion" then
+            ((.tool_input.questions[0].question // "")[:120])
+        elif $tool == "SendMessage" then
+            (.tool_input.to // "")
+        elif $tool == "LSP" then
+            (.tool_input.operation // "")
+        elif $tool == "Skill" then
+            (.tool_input.skill // "")
+        else
+            ""
+        end
+    ' 2>/dev/null)
+    if [ "$TOOL" = "Agent" ]; then
+        SUBAGENT_TYPE=$(echo "$input" | jq -r '.tool_input.subagent_type // ""' 2>/dev/null)
+    fi
 fi
 
 # Determine status from event
@@ -115,7 +143,8 @@ case "$EVENT" in
             elicitation_dialog) STATUS="awaiting_mcp_input" ;;
             *)                  exit 0 ;;  # Ignore other notification types
         esac
-        TOOL="" ;;
+        TOOL=""
+        STATUS_CONTEXT=$(echo "$input" | jq -r '.message // ""' 2>/dev/null) ;;
     StopFailure)
         STATUS="error:${ERROR:-unknown}"
         TOOL="" ;;
@@ -166,6 +195,13 @@ if [ "$EVENT" = "PostToolUseFailure" ]; then
     TOOL_FAILURE_DELTA=1
 fi
 
+# Status context lifecycle: clear on PostToolUse/UserPromptSubmit/SessionStart,
+# preserve on Stop/SubagentStop/SubagentStart/CwdChanged/PostToolUseFailure/StopFailure
+CLEAR_CONTEXT="false"
+case "$EVENT" in
+    PostToolUse|UserPromptSubmit|SessionStart) CLEAR_CONTEXT="true" ;;
+esac
+
 # Atomic write — hook-owned fields only
 TMPFILE=$(mktemp "$STATUS_DIR/.tmp.XXXXXX")
 echo "$EXISTING" | jq \
@@ -188,6 +224,8 @@ echo "$EXISTING" | jq \
     --arg error_type "$ERROR" \
     --arg error_details "$ERROR_DETAILS" \
     --argjson tool_failure_delta "$TOOL_FAILURE_DELTA" \
+    --arg status_context "$STATUS_CONTEXT" \
+    --argjson clear_context "$CLEAR_CONTEXT" \
     '{
         session_id: $sid,
         cwd: $cwd,
@@ -208,5 +246,8 @@ echo "$EXISTING" | jq \
         active_subagent_type: $active_subagent_type,
         error_type: $error_type,
         error_details: $error_details,
-        tool_failures: ((.tool_failures // 0) + $tool_failure_delta)
+        tool_failures: ((.tool_failures // 0) + $tool_failure_delta),
+        status_context: (if $status_context != "" then $status_context
+                         elif $clear_context then ""
+                         else (.status_context // "") end)
     }' > "$TMPFILE" && mv "$TMPFILE" "$STATUS_FILE"
