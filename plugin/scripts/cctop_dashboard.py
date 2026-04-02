@@ -1093,17 +1093,16 @@ class _CctopTable(DataTable):
     def _is_non_session_row(self, row_idx: int) -> bool:
         """Check if a row index points to a group header or spacer."""
         try:
-            row_key, _ = self._row_order[row_idx]
-            key_str = str(row_key.value)
+            cell_key = self.coordinate_to_cell_key(Coordinate(row_idx, 0))
+            key_str = str(cell_key.row_key.value)
             return key_str.startswith(_GROUP_ROW_PREFIX) or key_str.startswith(
                 _GROUP_SPACER_PREFIX
             )
-        except (IndexError, Exception):
+        except Exception:
             return False
 
     def action_cursor_up(self) -> None:
         super().action_cursor_up()
-        # Skip non-session rows (headers, spacers)
         for _ in range(self.row_count):
             if not self._is_non_session_row(self.cursor_coordinate.row):
                 break
