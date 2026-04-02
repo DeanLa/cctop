@@ -562,6 +562,7 @@ _COLUMN_BY_KEY: dict[str, ColumnDef] = {c.key: c for c in COLUMNS}
 # --- Group-by definitions (single source of truth) ---
 
 _GROUP_ROW_PREFIX = "__g:"
+_GROUP_SPACER_PREFIX = "__gs:"
 
 
 @dataclass(frozen=True)
@@ -634,8 +635,8 @@ def _group_header_cells(
     """Build cell values for a group separator row."""
     indicator = "\u25b6" if collapsed else "\u25bc"
     label = Text.assemble(
-        (f"{indicator} ", "bold"),
-        (name, "bold"),
+        (f"{indicator} ", "dim"),
+        (name, "dim"),
         (f" ({count})", "dim"),
     )
     return (label,) + ("",) * (num_cols - 1)
@@ -1088,6 +1089,32 @@ class _CctopTable(DataTable):
         n = len(self.columns)
         if n:
             self.selected_column = (self.selected_column + 1) % n
+
+    def _is_non_session_row(self, row_idx: int) -> bool:
+        """Check if a row index points to a group header or spacer."""
+        try:
+            row_key, _ = self._row_order[row_idx]
+            key_str = str(row_key.value)
+            return key_str.startswith(_GROUP_ROW_PREFIX) or key_str.startswith(
+                _GROUP_SPACER_PREFIX
+            )
+        except (IndexError, Exception):
+            return False
+
+    def action_cursor_up(self) -> None:
+        super().action_cursor_up()
+        # Skip non-session rows (headers, spacers)
+        for _ in range(self.row_count):
+            if not self._is_non_session_row(self.cursor_coordinate.row):
+                break
+            super().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        super().action_cursor_down()
+        for _ in range(self.row_count):
+            if not self._is_non_session_row(self.cursor_coordinate.row):
+                break
+            super().action_cursor_down()
 
     def _should_highlight(self, cursor, target_cell, type_of_cursor):
         if super()._should_highlight(cursor, target_cell, type_of_cursor):
@@ -1638,8 +1665,11 @@ class SessionsDashboard(App):
             return [(s.session_id, _row_cells(s, vis)) for s in ordered]
         groups = _group_sessions(ordered, group_def)
         num_cols = len(vis)
+        empty_row = ("",) * num_cols
         rows: list[tuple[str, tuple]] = []
-        for name, sessions in groups:
+        for i, (name, sessions) in enumerate(groups):
+            if i > 0:
+                rows.append((f"{_GROUP_SPACER_PREFIX}{name}", empty_row))
             collapsed = name in self._collapsed_groups
             rows.append((
                 f"{_GROUP_ROW_PREFIX}{name}",
