@@ -627,6 +627,19 @@ def _row_cells(s: SessionInfo, columns: tuple[ColumnDef, ...]) -> tuple:
     return tuple(c.cell(s) for c in columns)
 
 
+def _group_header_cells(
+    name: str, count: int, collapsed: bool, num_cols: int
+) -> tuple:
+    """Build cell values for a group separator row."""
+    indicator = "\u25b6" if collapsed else "\u25bc"
+    label = Text.assemble(
+        (f"{indicator} ", "bold"),
+        (name, "bold"),
+        (f" ({count})", "dim"),
+    )
+    return (label,) + ("",) * (num_cols - 1)
+
+
 def _read_json(path: Path) -> dict:
     """Read a JSON file, returning an empty dict on any error."""
     try:
@@ -1106,6 +1119,7 @@ class SessionsDashboard(App):
 
     sort_mode: reactive[str] = reactive("activity", init=False)
     sort_reverse: reactive[bool] = reactive(True, init=False)
+    group_by: reactive[str] = reactive("", init=False)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -1147,6 +1161,7 @@ class SessionsDashboard(App):
         self._last_health: HealthStatus | None = None
         self._last_row_keys: list[str] = []
         self._hidden_columns: set[str] = hidden_columns or set()
+        self._collapsed_groups: set[str] = set()
 
     def _setup_table(self) -> None:
         """Configure the DataTable with columns from COLUMNS definitions."""
@@ -1188,10 +1203,10 @@ class SessionsDashboard(App):
         table.clear(columns=True)
         vis = self._visible_columns()
         self._column_keys = table.add_columns(*self._column_headers(vis))
-        ordered = self._sorted_sessions()
-        for s in ordered:
-            table.add_row(*_row_cells(s, vis), key=s.session_id)
-        self._last_row_keys = [s.session_id for s in ordered]
+        rows = self._build_table_rows(vis)
+        for key, cells in rows:
+            table.add_row(*cells, key=key)
+        self._last_row_keys = [k for k, _ in rows]
         self._restore_cursor(table, saved_key)
         self._update_column_indicator()
 
@@ -1431,6 +1446,13 @@ class SessionsDashboard(App):
         self._on_sort_changed()
         self._persist_sort()
 
+    def watch_group_by(self, new_value: str) -> None:
+        if not getattr(self, "_config_loaded", False):
+            return
+        self._collapsed_groups.clear()
+        self._repopulate_table()
+        self._update_subtitle()
+
     def _persist_sort(self) -> None:
         """Save current sort settings to config."""
         if getattr(self, "_config_loaded", False):
@@ -1516,26 +1538,28 @@ class SessionsDashboard(App):
         sort_fn = col_def.sort_key or (lambda s: s.last_activity or "")
         return sorted(self._sessions, key=sort_fn, reverse=self.sort_reverse)
 
-    def _patch_table_cells(
-        self, ordered: list[SessionInfo], vis: tuple[ColumnDef, ...]
-    ) -> None:
-        """Update cell values in place without rebuilding the table."""
-        table = self.query_one(_CctopTable)
-        for s in ordered:
-            cells = _row_cells(s, vis)
-            for col_key, value in zip(self._column_keys, cells):
-                table.update_cell(s.session_id, col_key, value)
-
-    def _rebuild_table(
-        self, ordered: list[SessionInfo], vis: tuple[ColumnDef, ...]
-    ) -> None:
-        """Clear and rebuild all rows, preserving cursor position."""
-        table = self.query_one(_CctopTable)
-        saved_key = self._save_cursor(table)
-        table.clear()
-        for s in ordered:
-            table.add_row(*_row_cells(s, vis), key=s.session_id)
-        self._restore_cursor(table, saved_key)
+    def _build_table_rows(
+        self, vis: tuple[ColumnDef, ...]
+    ) -> list[tuple[str, tuple]]:
+        """Build (row_key, cells) list, interleaving group headers when grouped."""
+        ordered = self._sorted_sessions()
+        group_def = GROUP_DEFS.get(self.group_by) if self.group_by else None
+        if not group_def:
+            return [(s.session_id, _row_cells(s, vis)) for s in ordered]
+        groups = _group_sessions(ordered, group_def)
+        num_cols = len(vis)
+        rows: list[tuple[str, tuple]] = []
+        for name, sessions in groups:
+            collapsed = name in self._collapsed_groups
+            rows.append((
+                f"{_GROUP_ROW_PREFIX}{name}",
+                _group_header_cells(name, len(sessions), collapsed, num_cols),
+            ))
+            if not collapsed:
+                rows.extend(
+                    (s.session_id, _row_cells(s, vis)) for s in sessions
+                )
+        return rows
 
     @staticmethod
     def _save_cursor(table: DataTable):
@@ -1558,17 +1582,25 @@ class SessionsDashboard(App):
 
     def _repopulate_table(self) -> None:
         """Sort sessions and update the table, using cell patches when possible."""
-        ordered = self._sorted_sessions()
-        new_keys = [s.session_id for s in ordered]
         vis = self._visible_columns()
+        rows = self._build_table_rows(vis)
+        new_keys = [k for k, _ in rows]
 
         if new_keys == self._last_row_keys:
-            self._patch_table_cells(ordered, vis)
+            table = self.query_one(_CctopTable)
+            for key, cells in rows:
+                for col_key, value in zip(self._column_keys, cells):
+                    table.update_cell(key, col_key, value)
         else:
-            self._rebuild_table(ordered, vis)
+            table = self.query_one(_CctopTable)
+            saved_key = self._save_cursor(table)
+            table.clear()
+            for key, cells in rows:
+                table.add_row(*cells, key=key)
+            self._restore_cursor(table, saved_key)
             self._last_row_keys = new_keys
 
-        if not ordered:
+        if not self._sessions:
             self._clear_detail_panels()
 
     # --- Detail panel ----------------------------------------------------
@@ -1690,6 +1722,17 @@ class SessionsDashboard(App):
         self.query_one("#status-right", Static).update("")
         self.query_one("#detail-chat", Static).update("")
         self.query_one("#detail-info", Static).update("")
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Toggle collapse when Enter is pressed on a group header row."""
+        if event.row_key is None:
+            return
+        key = str(event.row_key.value)
+        if not key.startswith(_GROUP_ROW_PREFIX):
+            return
+        group_name = key[len(_GROUP_ROW_PREFIX):]
+        self._collapsed_groups.symmetric_difference_update({group_name})
+        self._repopulate_table()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Show detail for the highlighted row."""
