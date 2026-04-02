@@ -25,6 +25,7 @@ from cctop_dashboard import (
     SessionsDashboard,
     SessionInfo,
     ColumnPicker,
+    GroupPicker,
     HealthStatus,
     _render_message,
     format_tokens,
@@ -43,6 +44,11 @@ from cctop_dashboard import (
     load_config,
     save_config,
     _reset_session_data,
+    _group_sessions,
+    _is_stale,
+    _GROUP_ROW_PREFIX,
+    GroupDef,
+    GROUP_DEFS,
     CONFIG_PATH,
     STATUS_DIR,
 )
@@ -1687,3 +1693,207 @@ async def test_cost_in_detail_panel(fake_status_dir):
         info = app.query_one("#detail-info", Static)
         rendered = _render_static_text(info)
         assert "$" in rendered
+
+
+# --- Group-by unit tests ---
+
+
+def test_group_sessions_by_project():
+    """Dynamic grouping by project produces alphabetically sorted groups."""
+    sessions = [
+        SessionInfo(session_id="s1", project_name="beta", last_activity=_now_iso()),
+        SessionInfo(session_id="s2", project_name="alpha", last_activity=_now_iso()),
+        SessionInfo(session_id="s3", project_name="beta", last_activity=_now_iso()),
+    ]
+    gd = GROUP_DEFS["project"]
+    groups = _group_sessions(sessions, gd)
+    assert [name for name, _ in groups] == ["alpha", "beta"]
+    assert [s.session_id for _, ss in groups for s in ss] == ["s2", "s1", "s3"]
+
+
+def test_group_sessions_fixed_order():
+    """Fixed-order grouping (stale) respects predefined order, omits empty groups."""
+    sessions = [
+        SessionInfo(session_id="s1", last_activity=_now_iso()),
+        SessionInfo(session_id="s2", last_activity=_ago_iso(120)),  # stale (>60min)
+        SessionInfo(session_id="s3", last_activity=_now_iso()),
+    ]
+    gd = GROUP_DEFS["stale"]
+    groups = _group_sessions(sessions, gd)
+    names = [name for name, _ in groups]
+    assert names == ["Active", "Stale"]
+    assert len(groups[0][1]) == 2  # Active
+    assert len(groups[1][1]) == 1  # Stale
+
+
+def test_group_sessions_renamed():
+    """Renamed grouping splits named vs unnamed sessions."""
+    sessions = [
+        SessionInfo(session_id="s1", custom_title="My Session"),
+        SessionInfo(session_id="s2", custom_title=""),
+        SessionInfo(session_id="s3", custom_title="Another"),
+    ]
+    gd = GROUP_DEFS["renamed"]
+    groups = _group_sessions(sessions, gd)
+    names = [name for name, _ in groups]
+    assert names == ["Named", "Unnamed"]
+    assert len(groups[0][1]) == 2  # Named
+    assert len(groups[1][1]) == 1  # Unnamed
+
+
+def test_group_sessions_model():
+    """Model grouping discovers groups from data."""
+    sessions = [
+        SessionInfo(session_id="s1", model="claude-sonnet-4-6-20260301"),
+        SessionInfo(session_id="s2", model="claude-opus-4-6-20260401"),
+        SessionInfo(session_id="s3", model="claude-sonnet-4-6-20260301"),
+    ]
+    gd = GROUP_DEFS["model"]
+    groups = _group_sessions(sessions, gd)
+    group_names = [name for name, _ in groups]
+    assert len(groups) == 2
+    # Alphabetical order
+    assert group_names == sorted(group_names, key=str.lower)
+
+
+def test_is_stale_recent():
+    """Recently active session is not stale."""
+    s = SessionInfo(session_id="s1", last_activity=_now_iso())
+    assert not _is_stale(s)
+
+
+def test_is_stale_old():
+    """Session inactive for 2 hours is stale."""
+    s = SessionInfo(session_id="s1", last_activity=_ago_iso(120))
+    assert _is_stale(s)
+
+
+def test_group_def_registry():
+    """All expected group-by options are registered."""
+    assert set(GROUP_DEFS.keys()) == {"project", "model", "stale", "renamed"}
+
+
+# --- Group-by TUI integration tests ---
+
+
+@pytest.mark.asyncio
+async def test_group_by_project(fake_status_dir):
+    """Setting group_by='project' inserts group header rows."""
+    write_fake_session(fake_status_dir, "s1", cwd="/tmp/alpha")
+    write_fake_session(fake_status_dir, "s2", cwd="/tmp/beta")
+    write_fake_session(fake_status_dir, "s3", cwd="/tmp/alpha")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=3)
+        app.group_by = "project"
+        await pilot.pause()
+        table = app.query_one(DataTable)
+        # 2 groups + 3 sessions = 5 rows
+        assert table.row_count == 5
+
+
+@pytest.mark.asyncio
+async def test_group_by_stale(fake_status_dir):
+    """Stale grouping creates Active and Stale headers."""
+    write_fake_session(fake_status_dir, "active-1")
+    write_fake_session(fake_status_dir, "stale-1", last_activity=_ago_iso(120))
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=2)
+        app.group_by = "stale"
+        await pilot.pause()
+        table = app.query_one(DataTable)
+        # 2 groups + 2 sessions = 4 rows
+        assert table.row_count == 4
+
+
+@pytest.mark.asyncio
+async def test_collapse_group(fake_status_dir):
+    """Selecting a group header row toggles collapse."""
+    write_fake_session(fake_status_dir, "s1", cwd="/tmp/alpha")
+    write_fake_session(fake_status_dir, "s2", cwd="/tmp/beta")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=2)
+        app.group_by = "project"
+        await pilot.pause()
+        table = app.query_one(DataTable)
+        assert table.row_count == 4  # 2 groups + 2 sessions
+        # Move cursor to first row (group header) and press Enter to collapse
+        table.move_cursor(row=0)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert table.row_count == 3  # 1 collapsed header + 1 header + 1 session
+        # Press Enter again to expand
+        table.move_cursor(row=0)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert table.row_count == 4  # back to fully expanded
+
+
+@pytest.mark.asyncio
+async def test_clear_group_by(fake_status_dir):
+    """Pressing G clears grouping back to flat view."""
+    write_fake_session(fake_status_dir, "s1")
+    write_fake_session(fake_status_dir, "s2")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=2)
+        app.group_by = "project"
+        await pilot.pause()
+        table = app.query_one(DataTable)
+        grouped_count = table.row_count
+        assert grouped_count > 2  # has headers
+        await pilot.press("G")
+        await pilot.pause()
+        assert app.group_by == ""
+        assert table.row_count == 2  # flat again
+
+
+@pytest.mark.asyncio
+async def test_group_by_subtitle(fake_status_dir):
+    """Subtitle includes group label when grouped."""
+    write_fake_session(fake_status_dir, "s1")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        assert "group:" not in app.sub_title
+        app.group_by = "project"
+        await pilot.pause()
+        assert "group: Project" in app.sub_title
+        app.group_by = ""
+        await pilot.pause()
+        assert "group:" not in app.sub_title
+
+
+@pytest.mark.asyncio
+async def test_group_by_persisted(fake_status_dir):
+    """Group-by setting is saved to config."""
+    write_fake_session(fake_status_dir, "s1")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        app.group_by = "model"
+        await pilot.pause()
+        cfg = load_config()
+        assert cfg["group"]["by"] == "model"
+
+
+@pytest.mark.asyncio
+async def test_detail_panel_clears_on_group_header(fake_status_dir):
+    """Highlighting a group header row clears the detail panels."""
+    write_fake_session(fake_status_dir, "s1", cwd="/tmp/alpha")
+    write_fake_session(fake_status_dir, "s2", cwd="/tmp/beta")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=2)
+        app.group_by = "project"
+        await pilot.pause()
+        # Move to group header (first row)
+        table = app.query_one(DataTable)
+        table.move_cursor(row=0)
+        await pilot.pause()
+        # Detail panel should be empty (no session for header rows)
+        status_left = app.query_one("#status-left", Static)
+        rendered = _render_static_text(status_left)
+        assert rendered.strip() == ""
