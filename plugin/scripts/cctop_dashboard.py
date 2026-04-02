@@ -963,6 +963,65 @@ class ColumnPicker(ModalScreen[set]):
         self.dismiss(self._original_hidden)
 
 
+# --- Group Picker Modal ---
+
+
+class GroupPicker(ModalScreen[str]):
+    """Modal for selecting a group-by column."""
+
+    CSS = """
+    GroupPicker {
+        align: center middle;
+    }
+    #group-list {
+        width: 40;
+        height: auto;
+        max-height: 12;
+        background: $surface;
+        border: tall $accent;
+        padding: 0 1;
+    }
+    #group-keys {
+        width: 40;
+        height: 1;
+        background: $surface;
+        color: $text-muted;
+        content-align: center middle;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel_picker", "Cancel", show=False),
+        Binding("g", "cancel_picker", "Cancel", show=False),
+    ]
+
+    def __init__(self, current: str) -> None:
+        super().__init__()
+        self._current = current
+
+    def _build_options(self) -> list[Option]:
+        opts = [
+            Option(
+                f"{'●' if self._current == '' else '○'} None (flat view)", id="__none__"
+            ),
+        ]
+        for gd in GROUP_DEFS.values():
+            marker = "●" if self._current == gd.key else "○"
+            opts.append(Option(f"{marker} {gd.label}", id=gd.key))
+        return opts
+
+    def compose(self) -> ComposeResult:
+        yield OptionList(*self._build_options(), id="group-list")
+        yield Static("enter select · esc cancel", id="group-keys")
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        oid = event.option_id
+        self.dismiss("" if oid == "__none__" else oid)
+
+    def action_cancel_picker(self) -> None:
+        self.dismiss(self._current)
+
+
 # --- Confirm Kill Modal ---
 
 
@@ -1115,6 +1174,8 @@ class SessionsDashboard(App):
         Binding("C", "show_all_columns", "Show all"),
         Binding("k", "kill_session", "Kill"),
         Binding("a", "tmux_attach", "Tmux Attach"),
+        Binding("g", "group_by_picker", "Group"),
+        Binding("G", "clear_group_by", "Ungroup"),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
@@ -1288,6 +1349,22 @@ class SessionsDashboard(App):
             return
         self._hidden_columns.clear()
         self._apply_column_visibility()
+
+    def action_group_by_picker(self) -> None:
+        """Open the group-by picker modal."""
+
+        def _on_dismiss(result: str | None) -> None:
+            if result is not None and result != self.group_by:
+                self.group_by = result
+
+        self.push_screen(GroupPicker(self.group_by), callback=_on_dismiss)
+
+    def action_clear_group_by(self) -> None:
+        """Remove grouping and return to flat view."""
+        if not self.group_by:
+            self.notify("Not grouped", severity="information")
+            return
+        self.group_by = ""
 
     def action_kill_session(self) -> None:
         """Kill the highlighted session's process."""
@@ -1502,11 +1579,16 @@ class SessionsDashboard(App):
         self._update_health_bar()
 
     def _update_subtitle(self) -> None:
-        """Update the header subtitle with session count and sort info."""
+        """Update the header subtitle with session count, group, and sort info."""
         count = len(self._sessions)
         col_def = _COLUMN_BY_KEY.get(self.sort_mode)
-        label = col_def.header if col_def else self.sort_mode
-        self.sub_title = f"{_plural(count, 'session')} · sort: {label}"
+        sort_label = col_def.header if col_def else self.sort_mode
+        parts = [_plural(count, "session")]
+        group_def = GROUP_DEFS.get(self.group_by)
+        if group_def:
+            parts.append(f"group: {group_def.label}")
+        parts.append(f"sort: {sort_label}")
+        self.sub_title = " · ".join(parts)
 
     def _update_health_bar(self) -> None:
         """Show or hide the health warning bar based on current health status."""
