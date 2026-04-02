@@ -382,8 +382,7 @@ class SessionInfo:
 def styled_status(session: SessionInfo) -> Text:
     """Return a Rich Text object with colour-coded status."""
     raw = session.status
-    age = _parse_age_seconds(session.last_activity)
-    if age is not None and age > STALE_SECONDS:
+    if _is_stale(session):
         return Text("stale", style="dim")
 
     # Error states (error:rate_limit, error:auth_failed, etc.)
@@ -557,6 +556,70 @@ COLUMNS: tuple[ColumnDef, ...] = (
 )
 
 _COLUMN_BY_KEY: dict[str, ColumnDef] = {c.key: c for c in COLUMNS}
+
+
+# --- Group-by definitions (single source of truth) ---
+
+_GROUP_ROW_PREFIX = "__g:"
+
+
+@dataclass(frozen=True)
+class GroupDef:
+    """Definition for one group-by option."""
+
+    key: str  # internal identifier, e.g. "project"
+    label: str  # display name in picker/subtitle
+    group_fn: Callable[[SessionInfo], str]  # extracts group label from session
+    order: tuple[str, ...] | None = None  # fixed display order for binary groups
+
+
+def _is_stale(s: SessionInfo) -> bool:
+    """Check whether a session is stale (idle > STALE_SECONDS)."""
+    age = _parse_age_seconds(s.last_activity)
+    return age is not None and age > STALE_SECONDS
+
+
+GROUP_DEFS: dict[str, GroupDef] = {
+    "project": GroupDef(
+        "project",
+        "Project",
+        group_fn=lambda s: s.project_name
+        or (os.path.basename(s.cwd) if s.cwd else "unknown"),
+    ),
+    "model": GroupDef(
+        "model",
+        "Model",
+        group_fn=lambda s: friendly_model_name(s.model) if s.model else "unknown",
+    ),
+    "stale": GroupDef(
+        "stale",
+        "Active / Stale",
+        group_fn=lambda s: "Stale" if _is_stale(s) else "Active",
+        order=("Active", "Stale"),
+    ),
+    "renamed": GroupDef(
+        "renamed",
+        "Named / Unnamed",
+        group_fn=lambda s: "Named" if s.custom_title else "Unnamed",
+        order=("Named", "Unnamed"),
+    ),
+}
+
+
+def _group_sessions(
+    sessions: list[SessionInfo], group_def: GroupDef
+) -> list[tuple[str, list[SessionInfo]]]:
+    """Partition sorted sessions into ordered groups.
+
+    Returns (group_name, sessions) pairs. Fixed-order groups use GroupDef.order;
+    dynamic groups are sorted alphabetically. Empty groups are omitted.
+    """
+    buckets: dict[str, list[SessionInfo]] = {}
+    for s in sessions:
+        buckets.setdefault(group_def.group_fn(s), []).append(s)
+    if group_def.order:
+        return [(k, buckets[k]) for k in group_def.order if k in buckets]
+    return sorted(buckets.items(), key=lambda x: x[0].lower())
 
 
 def _row_cells(s: SessionInfo, columns: tuple[ColumnDef, ...]) -> tuple:
