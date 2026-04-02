@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.0 — 2026-04-02
+
+### Effort & Cost, See What Each Session Is Spending
+- **Effort column**: shows the active effort level per session, extracted from `/effort` commands in the transcript, with fallback to your global default
+- **Cost column**: estimates session cost from cumulative token usage (main + subagent) using Anthropic's published pricing
+- Both columns hidden by default, toggle them on via the column picker (`C`)
+- Effort and cost also appear in the detail panel
+
+### Smoother Upgrades
+- Installing a new version no longer wipes running sessions from the dashboard
+- Upgrades now use in-place plugin update instead of remove-and-reinstall
+
 ## v0.2.0 — 2026-03-30
 
 ### Status Detection, Know What Every Session Is Actually Doing
