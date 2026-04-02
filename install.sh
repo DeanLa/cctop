@@ -17,18 +17,26 @@ for arg in "$@"; do
     esac
 done
 
-# --- Clean slate: remove previous install ---
-claude plugin marketplace remove cctop 2>/dev/null || true
+# --- Clean up legacy installs ---
 claude plugin uninstall cctop-debug@cctop 2>/dev/null || true
 rm -f "$BIN" "$HOME/bin/cctop"  # also clean legacy ~/bin location
 
-# --- Install the Claude Code plugin ---
+# --- Install / upgrade the Claude Code plugin ---
 if [ "$MODE" = "dev" ] && [ -f "$SCRIPT_DIR/.claude-plugin/marketplace.json" ]; then
+    # Dev mode: always do full marketplace add + install (safe — version doesn't change)
+    claude plugin marketplace remove cctop 2>/dev/null || true
     claude plugin marketplace add "$SCRIPT_DIR"
+    claude plugin install cctop@cctop --scope user
+elif claude plugin marketplace update cctop 2>/dev/null \
+  && claude plugin update cctop@cctop --scope user 2>/dev/null; then
+    # Upgrade: update in-place — avoids removing the plugin entry, which would
+    # fire SessionEnd on running sessions and wipe their ~/.cctop/*.json files
+    echo "Upgraded cctop plugin"
 else
+    # Fresh install: marketplace not yet registered
     claude plugin marketplace add "$REPO_URL"
+    claude plugin install cctop@cctop --scope user
 fi
-claude plugin install cctop@cctop --scope user
 
 # --- Optionally install the debug plugin ---
 if [ -n "$DEBUG" ]; then
