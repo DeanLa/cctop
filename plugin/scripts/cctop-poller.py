@@ -535,13 +535,6 @@ def poll_once() -> None:
         # Read our own poller file
         poller_fp = STATUS_DIR / f"{sid}.poller.json"
         poller_data = read_json(poller_fp) or {}
-
-        # Seed effort level from global settings on first poll
-        if "effort_level" not in poller_data:
-            effort = _read_global_effort()
-            if effort:
-                poller_data["effort_level"] = effort
-
         offset = poller_data.get("_poller_offset", 0)
         prev_inode = poller_data.get("_poller_inode", 0)
 
@@ -559,6 +552,13 @@ def poll_once() -> None:
         )
 
         changed = False
+
+        # Seed effort level from global settings on first poll
+        if "effort_level" not in poller_data:
+            effort = _read_global_effort()
+            if effort:
+                poller_data["effort_level"] = effort
+                changed = True
 
         # After a full re-read, freeze existing counters so the full-file
         # deltas don't double-count accumulated values.
