@@ -1675,9 +1675,14 @@ class SessionsDashboard(App):
                 _group_header_cells(name, len(sessions), collapsed, num_cols),
             ))
             if not collapsed:
-                rows.extend(
-                    (s.session_id, _row_cells(s, vis)) for s in sessions
-                )
+                for s in sessions:
+                    cells = _row_cells(s, vis)
+                    first = cells[0]
+                    if isinstance(first, Text):
+                        indented = Text("   ") + first
+                    else:
+                        indented = f"   {first}"
+                    rows.append((s.session_id, (indented,) + cells[1:]))
         return rows
 
     @staticmethod
