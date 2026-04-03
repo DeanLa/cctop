@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.0 — 2026-04-04
+
+### Group-By View, Organize Sessions Your Way
+- Group sessions by any column (project, status, model, branch, etc.) with collapsible section headers
+- Each group shows a count of sessions, collapse or expand groups to focus on what matters
+- Toggle grouping via the `g` key, works alongside existing sort and column picker
+
+### Cleaner Chat History
+- System-injected messages (tool results, context reminders) are now parsed and displayed cleanly in the detail panel instead of showing as raw user messages
+
 ## v0.3.0 — 2026-04-02
 
 ### Effort & Cost, See What Each Session Is Spending
