@@ -16,7 +16,8 @@ Poller-owned fields: slug, custom_title, git_branch, project_name, model, last_u
   cumulative_input_tokens, cumulative_output_tokens,
   cumulative_cache_read_tokens, cumulative_cache_creation_tokens,
   subagent_input_tokens, subagent_output_tokens,
-  subagent_cache_read_tokens, subagent_cache_creation_tokens, effort_level
+  subagent_cache_read_tokens, subagent_cache_creation_tokens,
+  effort_level, recent_events
 """
 
 from __future__ import annotations
@@ -87,6 +88,32 @@ def _parse_system_message(content: str) -> str:
 # --- JSONL parsing ---
 
 
+def _tool_context(name: str, inp: dict) -> str:
+    """Extract a short context string from a tool_use input."""
+    if name in ("Edit", "Write", "Read", "NotebookEdit"):
+        return inp.get("file_path", "")
+    if name == "Bash":
+        return inp.get("description", "") or (inp.get("command", "") or "")[:120]
+    if name == "WebSearch":
+        return inp.get("query", "")
+    if name == "WebFetch":
+        return inp.get("url", "")
+    if name in ("Grep", "Glob"):
+        return inp.get("pattern", "")
+    if name == "Agent":
+        return inp.get("description", "")
+    if name == "AskUserQuestion":
+        qs = inp.get("questions") or []
+        return (qs[0].get("question", "")[:120]) if qs else ""
+    if name == "SendMessage":
+        return inp.get("to", "")
+    if name == "LSP":
+        return inp.get("operation", "")
+    if name == "Skill":
+        return inp.get("skill", "")
+    return ""
+
+
 def parse_new_lines(lines: list[str]) -> dict:
     """Parse JSONL lines and extract poller-owned fields.
 
@@ -113,6 +140,7 @@ def parse_new_lines(lines: list[str]) -> dict:
     cumulative_output_delta = 0
     cumulative_cache_read_delta = 0
     cumulative_cache_creation_delta = 0
+    events_delta: list[dict] = []
 
     for raw_line in lines:
         raw_line = raw_line.strip()
@@ -134,24 +162,39 @@ def parse_new_lines(lines: list[str]) -> dict:
             updates["custom_title"] = obj.get("customTitle", "")
             continue
 
+        ts = obj.get("timestamp", "")
+
+        # System-injected content: slash commands appear as type=system,
+        # task notifications and other injections appear as type=user
+        # with content starting with "<".
+        sys_content = (
+            obj.get("content", "") if msg_type == "system"
+            else (obj.get("message") or {}).get("content", "") if msg_type == "user"
+            else None
+        )
+        if isinstance(sys_content, str) and sys_content.startswith("<"):
+            if "<command-name>/effort</command-name>" in sys_content:
+                m = re.search(r"<command-args>(\w+)</command-args>", sys_content)
+                if m:
+                    updates["effort_level"] = m.group(1)
+            summary = _parse_system_message(sys_content)
+            if summary:
+                updates["last_system_msg"] = summary
+                events_delta.append({"ts": ts, "type": "system", "detail": summary})
+            continue
+
+        if msg_type == "system":
+            continue
+
         message = obj.get("message") or {}
 
         if msg_type == "user":
             content = message.get("content", "")
             if isinstance(content, str) and content:
-                # Extract effort level from /effort commands
-                if "<command-name>/effort</command-name>" in content:
-                    m = re.search(r"<command-args>(\w+)</command-args>", content)
-                    if m:
-                        updates["effort_level"] = m.group(1)
-                if content.startswith("<"):
-                    summary = _parse_system_message(content)
-                    if summary:
-                        updates["last_system_msg"] = summary
-                else:
-                    turns_delta += 1
-                    updates["last_user_msg"] = content
-                    updates["last_system_msg"] = ""
+                turns_delta += 1
+                updates["last_user_msg"] = content
+                updates["last_system_msg"] = ""
+                events_delta.append({"ts": ts, "type": "user", "detail": content[:80]})
 
         elif msg_type == "assistant":
             content = message.get("content")
@@ -177,6 +220,7 @@ def parse_new_lines(lines: list[str]) -> dict:
                         # Track subagent spawns
                         elif name == "Agent":
                             subagent_count_delta += 1
+                        events_delta.append({"ts": ts, "type": "tool", "name": name, "detail": _tool_context(name, inp)})
 
                     elif btype == "tool_result":
                         if block.get("is_error"):
@@ -185,6 +229,7 @@ def parse_new_lines(lines: list[str]) -> dict:
                 text = " ".join(parts).strip()
                 if text:
                     updates["last_assistant_msg"] = text
+                    events_delta.append({"ts": ts, "type": "assistant", "detail": text[:80]})
 
             model = message.get("model", "")
             if model:
@@ -223,6 +268,7 @@ def parse_new_lines(lines: list[str]) -> dict:
     updates["_delta_cumulative_output"] = cumulative_output_delta
     updates["_delta_cumulative_cache_read"] = cumulative_cache_read_delta
     updates["_delta_cumulative_cache_creation"] = cumulative_cache_creation_delta
+    updates["_delta_events"] = events_delta
 
     return updates
 
@@ -545,6 +591,13 @@ def _accumulate_deltas(poller_data: dict, updates: dict) -> None:
         existing = set(poller_data.get("files_edited", []))
         existing.update(new_files)
         poller_data["files_edited"] = sorted(existing)
+
+    # recent_events: append new events, keep last 15
+    new_events = updates.pop("_delta_events", [])
+    if new_events:
+        existing_events = poller_data.get("recent_events", [])
+        existing_events.extend(new_events)
+        poller_data["recent_events"] = existing_events[-15:]
 
 
 def poll_once() -> None:
