@@ -1111,6 +1111,13 @@ class _CctopTable(DataTable):
                 break
             super().action_cursor_down()
 
+    def skip_to_session_row(self) -> None:
+        """If cursor is on a non-session row, advance to the next session."""
+        for _ in range(self.row_count):
+            if not self._is_non_session_row(self.cursor_coordinate.row):
+                break
+            super().action_cursor_down()
+
     def _should_highlight(self, cursor, target_cell, type_of_cursor):
         if super()._should_highlight(cursor, target_cell, type_of_cursor):
             return True
@@ -1293,6 +1300,7 @@ class SessionsDashboard(App):
             table.add_row(*cells, key=key)
         self._last_row_keys = [k for k, _ in rows]
         self._restore_cursor(table, saved_key)
+        table.skip_to_session_row()
         self._update_column_indicator()
 
     def _update_column_indicator(self) -> None:
@@ -1715,6 +1723,7 @@ class SessionsDashboard(App):
             for key, cells in rows:
                 table.add_row(*cells, key=key)
             self._restore_cursor(table, saved_key)
+            table.skip_to_session_row()
             self._last_row_keys = new_keys
 
         if not self._sessions:
