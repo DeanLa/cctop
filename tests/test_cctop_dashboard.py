@@ -46,7 +46,6 @@ from cctop_dashboard import (
     _reset_session_data,
     _group_sessions,
     _is_stale,
-    _GROUP_ROW_PREFIX,
     GroupDef,
     GROUP_DEFS,
     CONFIG_PATH,
@@ -1788,8 +1787,8 @@ async def test_group_by_project(fake_status_dir):
         app.group_by = "project"
         await pilot.pause()
         table = app.query_one(DataTable)
-        # 2 headers + 1 spacer + 3 sessions = 6 rows
-        assert table.row_count == 6
+        # 2 headers + 3 sessions = 5 rows
+        assert table.row_count == 5
 
 
 @pytest.mark.asyncio
@@ -1803,8 +1802,8 @@ async def test_group_by_stale(fake_status_dir):
         app.group_by = "stale"
         await pilot.pause()
         table = app.query_one(DataTable)
-        # 2 headers + 1 spacer + 2 sessions = 5 rows
-        assert table.row_count == 5
+        # 2 headers + 2 sessions = 4 rows
+        assert table.row_count == 4
 
 
 @pytest.mark.asyncio
@@ -1818,17 +1817,17 @@ async def test_collapse_group(fake_status_dir):
         app.group_by = "project"
         await pilot.pause()
         table = app.query_one(DataTable)
-        assert table.row_count == 5  # 2 headers + 1 spacer + 2 sessions
+        assert table.row_count == 4  # 2 headers + 2 sessions
         # Move cursor to first row (group header) and press Enter to collapse
         table.move_cursor(row=0)
         await pilot.press("enter")
         await pilot.pause()
-        assert table.row_count == 4  # collapsed header + spacer + header + session
+        assert table.row_count == 3  # collapsed header + header + session
         # Press Enter again to expand
         table.move_cursor(row=0)
         await pilot.press("enter")
         await pilot.pause()
-        assert table.row_count == 5  # back to fully expanded
+        assert table.row_count == 4  # back to fully expanded
 
 
 @pytest.mark.asyncio

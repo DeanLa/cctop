@@ -562,7 +562,6 @@ _COLUMN_BY_KEY: dict[str, ColumnDef] = {c.key: c for c in COLUMNS}
 # --- Group-by definitions (single source of truth) ---
 
 _GROUP_ROW_PREFIX = "__g:"
-_GROUP_SPACER_PREFIX = "__gs:"
 
 
 @dataclass(frozen=True)
@@ -1091,13 +1090,10 @@ class _CctopTable(DataTable):
             self.selected_column = (self.selected_column + 1) % n
 
     def _is_non_session_row(self, row_idx: int) -> bool:
-        """Check if a row index points to a group header or spacer."""
+        """Check if a row index points to a group header."""
         try:
             cell_key = self.coordinate_to_cell_key(Coordinate(row_idx, 0))
-            key_str = str(cell_key.row_key.value)
-            return key_str.startswith(_GROUP_ROW_PREFIX) or key_str.startswith(
-                _GROUP_SPACER_PREFIX
-            )
+            return str(cell_key.row_key.value).startswith(_GROUP_ROW_PREFIX)
         except Exception:
             return False
 
@@ -1664,11 +1660,8 @@ class SessionsDashboard(App):
             return [(s.session_id, _row_cells(s, vis)) for s in ordered]
         groups = _group_sessions(ordered, group_def)
         num_cols = len(vis)
-        empty_row = ("",) * num_cols
         rows: list[tuple[str, tuple]] = []
-        for i, (name, sessions) in enumerate(groups):
-            if i > 0:
-                rows.append((f"{_GROUP_SPACER_PREFIX}{name}", empty_row))
+        for name, sessions in groups:
             collapsed = name in self._collapsed_groups
             rows.append((
                 f"{_GROUP_ROW_PREFIX}{name}",
