@@ -48,6 +48,8 @@ from cctop_dashboard import (
     _is_stale,
     GroupDef,
     GROUP_DEFS,
+    _format_event_time,
+    _shorten_path,
     CONFIG_PATH,
     STATUS_DIR,
 )
@@ -123,7 +125,9 @@ def write_fake_session(tmpdir: Path, sid: str, *,
                        tool_failures: int = 0,
                        effort_level: str = "",
                        tmux_session: str = "",
-                       tmux_window: str = "") -> None:
+                       tmux_window: str = "",
+                       status_context: str = "",
+                       recent_events: list | None = None) -> None:
     """Write a pair of hook + poller JSON files into tmpdir."""
     hook = {
         "session_id": sid,
@@ -142,6 +146,7 @@ def write_fake_session(tmpdir: Path, sid: str, *,
         "tool_failures": tool_failures,
         "tmux_session": tmux_session,
         "tmux_window": tmux_window,
+        "status_context": status_context,
     }
     if pid is not None:
         hook["pid"] = pid
@@ -170,6 +175,7 @@ def write_fake_session(tmpdir: Path, sid: str, *,
         "files_edited": files_edited,
         "stop_reason": "",
         "effort_level": effort_level,
+        "recent_events": recent_events or [],
     }
     (tmpdir / f"{sid}.poller.json").write_text(json.dumps(poller))
 
@@ -1896,3 +1902,191 @@ async def test_detail_panel_clears_on_group_header(fake_status_dir):
         status_left = app.query_one("#status-left", Static)
         rendered = _render_static_text(status_left)
         assert rendered.strip() == ""
+
+
+# --- PR-R: Status context & activity log tests ---
+
+
+def test_format_event_time_valid():
+    """Should convert ISO timestamp to local HH:MM."""
+    result = _format_event_time("2026-04-02T14:30:00.000Z")
+    # Should be some HH:MM string (exact value depends on local timezone)
+    assert len(result.strip()) == 5
+    assert ":" in result
+
+
+def test_format_event_time_empty():
+    assert _format_event_time("") == "     "
+
+
+def test_format_event_time_invalid():
+    assert _format_event_time("not-a-date") == "     "
+
+
+def test_shorten_path_simple_file():
+    assert _shorten_path("main.py") == "main.py"
+
+
+def test_shorten_path_deep():
+    result = _shorten_path("/Users/dean/code/project/src/main.py")
+    assert result == "src/main.py"
+
+
+def test_shorten_path_short():
+    result = _shorten_path("src/main.py")
+    assert result == "src/main.py"
+
+
+def test_tool_context_helpers():
+    """Unit tests for _tool_context in the poller."""
+    mod = _load_poller_module()
+    tc = mod._tool_context
+
+    assert tc("Edit", {"file_path": "/a/b.py"}) == "/a/b.py"
+    assert tc("Write", {"file_path": "/x.txt"}) == "/x.txt"
+    assert tc("Read", {"file_path": "/r.md"}) == "/r.md"
+    assert tc("Bash", {"description": "Run tests", "command": "pytest"}) == "Run tests"
+    assert tc("Bash", {"command": "pytest tests/"}) == "pytest tests/"
+    assert tc("WebSearch", {"query": "python async"}) == "python async"
+    assert tc("WebFetch", {"url": "https://example.com"}) == "https://example.com"
+    assert tc("Grep", {"pattern": "TODO"}) == "TODO"
+    assert tc("Glob", {"pattern": "**/*.py"}) == "**/*.py"
+    assert tc("Agent", {"description": "explore code"}) == "explore code"
+    assert tc("SendMessage", {"to": "team-lead"}) == "team-lead"
+    assert tc("LSP", {"operation": "goToDefinition"}) == "goToDefinition"
+    assert tc("Skill", {"skill": "commit"}) == "commit"
+    assert tc("UnknownTool", {}) == ""
+
+
+def test_tool_context_ask_user_question():
+    """AskUserQuestion should extract the first question text."""
+    tc = _load_poller_module()._tool_context
+    assert tc("AskUserQuestion", {
+        "questions": [{"question": "Which framework?"}],
+    }) == "Which framework?"
+    assert tc("AskUserQuestion", {"questions": []}) == ""
+    assert tc("AskUserQuestion", {}) == ""
+
+
+def test_poller_extracts_recent_events():
+    """Poller should extract events from user messages and tool_use blocks."""
+    parse_new_lines = _load_poller_module().parse_new_lines
+
+    lines = [
+        json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": "Fix the auth bug"},
+            "timestamp": "2026-04-02T14:00:00.000Z",
+        }),
+        json.dumps({
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "I'll fix that."},
+                    {"type": "tool_use", "name": "Edit", "input": {"file_path": "/src/auth.py"}},
+                    {"type": "tool_use", "name": "Bash", "input": {"command": "pytest", "description": "Run tests"}},
+                ],
+                "model": "claude-sonnet-4-6",
+            },
+            "timestamp": "2026-04-02T14:01:00.000Z",
+        }),
+    ]
+    result = parse_new_lines(lines)
+    events = result.get("_delta_events", [])
+    assert len(events) == 4
+    assert events[0] == {"ts": "2026-04-02T14:00:00.000Z", "type": "user", "detail": "Fix the auth bug"}
+    assert events[1] == {"ts": "2026-04-02T14:01:00.000Z", "type": "tool", "name": "Edit", "detail": "/src/auth.py"}
+    assert events[2] == {"ts": "2026-04-02T14:01:00.000Z", "type": "tool", "name": "Bash", "detail": "Run tests"}
+    assert events[3]["type"] == "assistant"
+    assert events[3]["detail"] == "I'll fix that."
+
+
+def test_poller_skips_system_user_events():
+    """System-injected user messages should not appear as events."""
+    parse_new_lines = _load_poller_module().parse_new_lines
+
+    lines = [
+        json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": "<system-reminder>do stuff</system-reminder>"},
+            "timestamp": "2026-04-02T14:00:00.000Z",
+        }),
+    ]
+    result = parse_new_lines(lines)
+    events = result.get("_delta_events", [])
+    assert len(events) == 0
+
+
+@pytest.mark.asyncio
+async def test_status_context_in_detail_panel(fake_status_dir):
+    """Status context should appear in the info panel next to the status."""
+    write_fake_session(
+        fake_status_dir, "ctx-1111",
+        status="tool:Edit",
+        status_context="/src/auth.py",
+    )
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        info = app.query_one("#detail-info", Static)
+        rendered = _render_static_text(info)
+        assert "auth.py" in rendered
+        assert "Status" in rendered
+
+
+@pytest.mark.asyncio
+async def test_activity_log_renders(fake_status_dir):
+    """Activity log should render recent events in the activity panel."""
+    events = [
+        {"ts": "2026-04-02T14:00:00.000Z", "type": "user", "detail": "Fix the bug"},
+        {"ts": "2026-04-02T14:01:00.000Z", "type": "tool", "name": "Edit", "detail": "src/main.py"},
+        {"ts": "2026-04-02T14:02:00.000Z", "type": "tool", "name": "Bash", "detail": "Run tests"},
+        {"ts": "2026-04-02T14:02:30.000Z", "type": "assistant", "detail": "All tests pass now."},
+    ]
+    write_fake_session(fake_status_dir, "log-1111", recent_events=events)
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        activity = app.query_one("#detail-activity", Static)
+        rendered = _render_static_text(activity)
+        assert "Fix the bug" in rendered
+        assert "Edit" in rendered
+        assert "Bash" in rendered
+        assert "All tests pass" in rendered
+
+
+@pytest.mark.asyncio
+async def test_activity_log_fallback(fake_status_dir):
+    """When no recent_events, should fall back to user/assistant messages."""
+    write_fake_session(
+        fake_status_dir, "fallback-1111",
+        last_user_msg="hello world",
+        last_assistant_msg="hi there",
+        recent_events=[],
+    )
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        chat = app.query_one("#detail-chat", Static)
+        rendered = _render_static_text(chat)
+        assert "hello world" in rendered
+        assert "hi there" in rendered
+
+
+def test_load_sessions_status_context(fake_status_dir):
+    """SessionInfo should include status_context from hook JSON."""
+    write_fake_session(fake_status_dir, "sc-1111", status_context="src/app.py")
+    sessions = load_sessions()
+    assert len(sessions) == 1
+    assert sessions[0].status_context == "src/app.py"
+
+
+def test_load_sessions_recent_events(fake_status_dir):
+    """SessionInfo should include recent_events from poller JSON."""
+    events = [{"ts": "2026-04-02T14:00:00Z", "type": "user", "detail": "test"}]
+    write_fake_session(fake_status_dir, "re-1111", recent_events=events)
+    sessions = load_sessions()
+    assert len(sessions) == 1
+    assert len(sessions[0].recent_events) == 1
+    assert sessions[0].recent_events[0]["detail"] == "test"
