@@ -340,6 +340,7 @@ class SessionInfo:
     project_name: str = ""
     model: str = ""
     last_user_msg: str = ""
+    last_system_msg: str = ""
     last_assistant_msg: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
@@ -687,6 +688,7 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         git_branch=poller.get("git_branch", ""),
         project_name=poller.get("project_name", ""),
         last_user_msg=_clean_user_msg(poller.get("last_user_msg", "")),
+        last_system_msg=poller.get("last_system_msg", ""),
         last_assistant_msg=poller.get("last_assistant_msg", ""),
         input_tokens=poller.get("input_tokens", 0),
         output_tokens=poller.get("output_tokens", 0),
@@ -1840,6 +1842,10 @@ class SessionsDashboard(App):
         parts: list = []
         parts.extend(_render_message("User", session.last_user_msg, 300))
         parts.extend(_render_message("Claude", session.last_assistant_msg, 800))
+        if session.last_system_msg:
+            parts.append(Text.from_markup(
+                f"[dim italic]\u2192 {session.last_system_msg}[/dim italic]"
+            ))
         return Group(*parts)
 
     @staticmethod

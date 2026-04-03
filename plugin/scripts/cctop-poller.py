@@ -11,12 +11,12 @@ Writes poller-owned fields to <id>.poller.json (separate from the hook's
 <id>.json). The dashboard merges both files. This eliminates write races.
 
 Poller-owned fields: slug, custom_title, git_branch, project_name, model, last_user_msg,
-  last_assistant_msg, input_tokens, output_tokens, turns, files_edited,
-  subagent_count, error_count, stop_reason, cumulative_input_tokens,
-  cumulative_output_tokens, cumulative_cache_read_tokens,
-  cumulative_cache_creation_tokens, subagent_input_tokens,
-  subagent_output_tokens, subagent_cache_read_tokens,
-  subagent_cache_creation_tokens, effort_level
+  last_assistant_msg, last_system_msg, input_tokens, output_tokens, turns,
+  files_edited, subagent_count, error_count, stop_reason,
+  cumulative_input_tokens, cumulative_output_tokens,
+  cumulative_cache_read_tokens, cumulative_cache_creation_tokens,
+  subagent_input_tokens, subagent_output_tokens,
+  subagent_cache_read_tokens, subagent_cache_creation_tokens, effort_level
 """
 
 from __future__ import annotations
@@ -53,6 +53,35 @@ def _read_global_effort() -> str:
         return data.get("effortLevel", "")
     except (OSError, json.JSONDecodeError):
         return ""
+
+
+# --- System message parsing ---
+
+
+def _parse_system_message(content: str) -> str:
+    """Extract a human-friendly summary from a system-injected user message.
+
+    Returns a short label for display, or empty string if the message
+    type isn't worth surfacing (system reminders, local command caveats, etc.).
+    """
+    if "<task-notification>" in content:
+        m = re.search(r"<summary>(.*?)</summary>", content, re.DOTALL)
+        if m:
+            return f"Task: {m.group(1).strip()}"
+        m = re.search(r"<status>(.*?)</status>", content)
+        if m:
+            return f"Task {m.group(1).strip()}"
+        return "Task notification"
+
+    if "<command-name>" in content:
+        m = re.search(r"<command-name>(.*?)</command-name>", content)
+        cmd = m.group(1).strip() if m else ""
+        m = re.search(r"<command-args>(.*?)</command-args>", content)
+        args = m.group(1).strip() if m else ""
+        if cmd:
+            return f"Ran {cmd} {args}".strip() if args else f"Ran {cmd}"
+
+    return ""
 
 
 # --- JSONL parsing ---
@@ -115,9 +144,14 @@ def parse_new_lines(lines: list[str]) -> dict:
                     m = re.search(r"<command-args>(\w+)</command-args>", content)
                     if m:
                         updates["effort_level"] = m.group(1)
-                elif not content.startswith("<"):
+                if content.startswith("<"):
+                    summary = _parse_system_message(content)
+                    if summary:
+                        updates["last_system_msg"] = summary
+                else:
                     turns_delta += 1
                     updates["last_user_msg"] = content
+                    updates["last_system_msg"] = ""
 
         elif msg_type == "assistant":
             content = message.get("content")
@@ -541,10 +575,7 @@ def poll_once() -> None:
         # Migration: if tool_count was never tracked, full re-read to count
         # all tool_use blocks from the transcript.
         needs_full_reread = "tool_count" not in poller_data and offset > 0
-        # Fix: if last_user_msg is a system-injected message, re-read to
-        # recover the real last user message.
-        bad_user_msg = poller_data.get("last_user_msg", "").startswith("<")
-        if needs_full_reread or bad_user_msg:
+        if needs_full_reread:
             offset = 0
 
         lines, new_offset, current_inode = read_new_jsonl_lines(
@@ -562,7 +593,7 @@ def poll_once() -> None:
 
         # After a full re-read, freeze existing counters so the full-file
         # deltas don't double-count accumulated values.
-        if needs_full_reread or bad_user_msg:
+        if needs_full_reread:
             _saved = {k: poller_data.get(k, 0) for k in (
                 "turns", "tool_count", "subagent_count", "error_count",
                 "cumulative_input_tokens", "cumulative_output_tokens",
@@ -593,9 +624,8 @@ def poll_once() -> None:
             changed = True
 
         # Restore frozen counters after full re-read so only the targeted
-        # fields (tool_count for migration, last_user_msg for bad-msg fix)
-        # reflect the full-file scan.
-        if (needs_full_reread or bad_user_msg) and lines:
+        # field (tool_count for migration) reflects the full-file scan.
+        if needs_full_reread and lines:
             poller_data.update(_saved)
 
         if new_offset != offset:

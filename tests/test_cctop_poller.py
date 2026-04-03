@@ -17,6 +17,7 @@ _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 
 parse_new_lines = _mod.parse_new_lines
+_parse_system_message = _mod._parse_system_message
 resolve_git_branch = _mod.resolve_git_branch
 detect_worktree = _mod.detect_worktree
 
@@ -71,11 +72,13 @@ class TestTurnCounting:
         lines = [_system_line("<task-notification>Agent completed.</task-notification>")]
         result = parse_new_lines(lines)
         assert result["_delta_turns"] == 0
+        assert result["last_system_msg"] == "Task notification"
 
     def test_other_xml_tag_does_not_increment_turns(self):
         lines = [_system_line("<context>some injected context</context>")]
         result = parse_new_lines(lines)
         assert result["_delta_turns"] == 0
+        assert "last_system_msg" not in result
 
     def test_mixed_real_and_system_messages(self):
         lines = [
@@ -237,3 +240,100 @@ class TestDetectWorktree:
             mock_sp.run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=2)
             mock_sp.TimeoutExpired = subprocess.TimeoutExpired
             assert detect_worktree(str(tmp_path)) is None
+
+
+# --- _parse_system_message tests ---
+
+
+class TestParseSystemMessage:
+    """Verify human-friendly summaries from system-injected user messages."""
+
+    def test_task_notification_with_summary(self):
+        content = (
+            "<task-notification>\n"
+            "<task-id>abc123</task-id>\n"
+            "<status>completed</status>\n"
+            "<summary>Background command `pytest` finished</summary>\n"
+            "</task-notification>"
+        )
+        assert _parse_system_message(content) == "Task: Background command `pytest` finished"
+
+    def test_task_notification_with_status_fallback(self):
+        content = (
+            "<task-notification>\n"
+            "<task-id>abc123</task-id>\n"
+            "<status>killed</status>\n"
+            "</task-notification>"
+        )
+        assert _parse_system_message(content) == "Task killed"
+
+    def test_task_notification_bare(self):
+        assert _parse_system_message("<task-notification></task-notification>") == "Task notification"
+
+    def test_slash_command_with_args(self):
+        content = (
+            "<command-name>/effort</command-name>\n"
+            "<command-message>effort</command-message>\n"
+            "<command-args>max</command-args>"
+        )
+        assert _parse_system_message(content) == "Ran /effort max"
+
+    def test_slash_command_without_args(self):
+        content = "<command-name>/help</command-name>\n<command-message>help</command-message>"
+        assert _parse_system_message(content) == "Ran /help"
+
+    def test_system_reminder_returns_empty(self):
+        assert _parse_system_message("<system-reminder>Today is 2026-03-16.</system-reminder>") == ""
+
+    def test_local_command_caveat_returns_empty(self):
+        content = "<local-command-caveat>Caveat: messages below...</local-command-caveat>"
+        assert _parse_system_message(content) == ""
+
+    def test_unknown_tag_returns_empty(self):
+        assert _parse_system_message("<context>injected data</context>") == ""
+
+
+class TestSystemMessageInParseNewLines:
+    """Verify last_system_msg is populated by parse_new_lines()."""
+
+    def test_task_notification_sets_last_system_msg(self):
+        content = (
+            "<task-notification>\n"
+            "<summary>Agent completed: fixed the bug</summary>\n"
+            "</task-notification>"
+        )
+        result = parse_new_lines([_system_line(content)])
+        assert result["last_system_msg"] == "Task: Agent completed: fixed the bug"
+        assert "last_user_msg" not in result
+
+    def test_slash_command_sets_last_system_msg(self):
+        content = (
+            "<command-name>/compact</command-name>\n"
+            "<command-message>compact</command-message>\n"
+            "<command-args>full</command-args>"
+        )
+        result = parse_new_lines([_system_line(content)])
+        assert result["last_system_msg"] == "Ran /compact full"
+
+    def test_system_reminder_no_system_msg(self):
+        result = parse_new_lines([_system_line("<system-reminder>hook output</system-reminder>")])
+        assert "last_system_msg" not in result
+
+    def test_latest_system_msg_wins(self):
+        lines = [
+            _system_line("<task-notification><summary>first task</summary></task-notification>"),
+            _user_line("Do something"),
+            _system_line("<task-notification><summary>second task</summary></task-notification>"),
+        ]
+        result = parse_new_lines(lines)
+        assert result["last_system_msg"] == "Task: second task"
+        assert result["last_user_msg"] == "Do something"
+
+    def test_user_message_clears_system_msg(self):
+        lines = [
+            _system_line("<task-notification><summary>task done</summary></task-notification>"),
+            _user_line("Thanks, now do something else"),
+        ]
+        result = parse_new_lines(lines)
+        assert result["last_system_msg"] == ""
+        assert result["last_user_msg"] == "Thanks, now do something else"
