@@ -1098,18 +1098,23 @@ class _CctopTable(DataTable):
             return False
 
     def action_cursor_up(self) -> None:
+        prev = self.cursor_coordinate.row
         super().action_cursor_up()
         for _ in range(self.row_count):
             if not self._is_non_session_row(self.cursor_coordinate.row):
-                break
+                return
             super().action_cursor_up()
+        # Couldn't find a session row above — go back
+        self.move_cursor(row=prev)
 
     def action_cursor_down(self) -> None:
+        prev = self.cursor_coordinate.row
         super().action_cursor_down()
         for _ in range(self.row_count):
             if not self._is_non_session_row(self.cursor_coordinate.row):
-                break
+                return
             super().action_cursor_down()
+        self.move_cursor(row=prev)
 
     def skip_to_session_row(self) -> None:
         """If cursor is on a non-session row, advance to the next session."""
