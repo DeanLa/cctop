@@ -4,10 +4,10 @@ Items tagged with `PR-X` are assigned to a PR group, see [plans/pr-groups.md](pl
 When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
 ## Table & Columns
-- [ ] **6.** Group/collapse sessions by project directory `PR-M`
+- [ ] **80.** Bug: context usage column always shows `/200k` as the denominator, but context window size varies by model (e.g. Opus 4.6 has 200k default but 1M with extended context, Haiku has 200k, Sonnet has 200k). The denominator should reflect the actual model's context window, parsed from the session's model identifier or transcript metadata.
 
 ## Detail Panel
-- [ ] **14.** Parse system-injected user messages (e.g. `<task-notification>`) and display them nicely, show "Subagent completed: <summary>" instead of hiding them entirely `PR-H`
+- [ ] **79.** Bug: detail panel doesn't refresh when poller data updates, only when row selection changes — must navigate away and back to see new messages/status
 - [ ] **34.** Recent activity log: timestamped feed of recent events (tool calls, messages) for the selected session `PR-R`
 - [ ] **70.** Expanded status context in the detail panel: show the full story behind the current status label. E.g. `editing` → file path being edited, `needs input` → the question text, `awaiting plan` → plan summary, `running cmd` → the command, `error: rate_limit` → error details, `searching web` → query. Pull from hook JSON fields (`tool_input`, `last_assistant_message`, `error_details`, `message`) `PR-R`
 
@@ -17,13 +17,10 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **47.** Tmux attach: add env var gate (`os.environ.get("TMUX")`) to `check_action` so the `a` binding is hidden entirely when cctop isn't in tmux, keep per-session `tmux_session` check as second layer
 
 ## Session Lifecycle
-- [ ] **22.** Session history, persist ended session stats (tokens, cost, turns, duration) for later querying `PR-I`
+- [ ] **78.** Bug: `CwdChanged` hook overwrites `transcript_path` with a path based on the new cwd, but transcripts don't move — breaks message tracking when entering worktrees. Fix: clear `TRANSCRIPT_PATH` in the `CwdChanged` case so the jq expression preserves the original value.
+- [ ] ~~**22.** Session history, persist ended session stats (tokens, cost, turns, duration) for later querying~~ — removed, no consumer yet
 
 ## UI & Theming
-- [ ] **40.** Group-by view: group rows by a column (e.g. project, model, status) with collapsible section headers
-- [ ] **71.** Group-by option: stale/not-stale, group sessions by staleness state (active vs. stale)
-- [ ] **72.** Group-by option: model, group sessions by their Claude model
-- [ ] **73.** Group-by option: renamed/not-renamed, group sessions by whether they have a custom title
 - [ ] **42.** Configurable column display order: allow users to reorder columns via config (depends on #36)
 - [ ] **74.** Keyboard shortcuts help: press `?` to open an overlay listing all available keybindings with descriptions
 - [ ] **75.** Totals/summary bar: show aggregate metrics across all visible sessions (total cost, total tokens, session count) with breakdowns by model and project
@@ -96,3 +93,9 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [x] **52.** Show full (untruncated) model name in the detail panel, the table column truncates long model identifiers but the detail view should show the complete string `PR-N` — [#24](https://github.com/DeanLa/cctop/pull/24)
 - [x] **49.** Add `Effort` column showing the model's reasoning effort level (the setting controlled by `/effort` in Claude Code, e.g. low/medium/high) `PR-O` — [#28](https://github.com/DeanLa/cctop/pull/28)
 - [x] **50.** Add `Cost` column showing estimated session cost, replicate the token-based cost calculation from `claude-cost` natively within cctop (don't shell out to the script) `PR-O` — [#28](https://github.com/DeanLa/cctop/pull/28)
+- [x] **6.** Group/collapse sessions by project directory `PR-M` — [#29](https://github.com/DeanLa/cctop/pull/29)
+- [x] **14.** Parse system-injected user messages (e.g. `<task-notification>`) and display them nicely, show "Subagent completed: <summary>" instead of hiding them entirely `PR-H` — [#30](https://github.com/DeanLa/cctop/pull/30)
+- [x] **40.** Group-by view: group rows by a column (e.g. project, model, status) with collapsible section headers `PR-M` — [#29](https://github.com/DeanLa/cctop/pull/29)
+- [x] **71.** Group-by option: stale/not-stale, group sessions by staleness state (active vs. stale) `PR-M` — [#29](https://github.com/DeanLa/cctop/pull/29)
+- [x] **72.** Group-by option: model, group sessions by their Claude model `PR-M` — [#29](https://github.com/DeanLa/cctop/pull/29)
+- [x] **73.** Group-by option: renamed/not-renamed, group sessions by whether they have a custom title `PR-M` — [#29](https://github.com/DeanLa/cctop/pull/29)

@@ -104,6 +104,7 @@ Before committing, run a basic security audit on staged changes:
 
 - **ALWAYS use a worktree when starting work on a new branch.** Use the `EnterWorktree` tool to create an isolated worktree before making any changes. Do NOT just create a branch with `git checkout -b` or `git switch -c` in the main working directory.
 - This keeps the main working directory clean on `main` and avoids conflicts with other sessions.
+- When entering a worktree, rename the conversation to include the PR identifier, e.g. "PR-M: Group-by view".
 - When the work is done and merged, exit the worktree with `ExitWorktree`.
 
 ## PR Reviews & Comments
