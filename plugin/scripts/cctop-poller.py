@@ -80,7 +80,7 @@ def _parse_system_message(content: str) -> str:
         m = re.search(r"<command-args>(.*?)</command-args>", content)
         args = m.group(1).strip() if m else ""
         if cmd:
-            return f"Ran {cmd} {args}".strip() if args else f"Ran {cmd}"
+            return f"{cmd} {args}".strip()
 
     return ""
 
@@ -592,12 +592,12 @@ def _accumulate_deltas(poller_data: dict, updates: dict) -> None:
         existing.update(new_files)
         poller_data["files_edited"] = sorted(existing)
 
-    # recent_events: append new events, keep last 15
+    # recent_events: append new events (unbounded, session-scoped)
     new_events = updates.pop("_delta_events", [])
     if new_events:
         existing_events = poller_data.get("recent_events", [])
         existing_events.extend(new_events)
-        poller_data["recent_events"] = existing_events[-15:]
+        poller_data["recent_events"] = existing_events
 
 
 def poll_once() -> None:
