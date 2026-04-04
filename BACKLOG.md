@@ -8,9 +8,9 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **84.** Improve column width allocation: current widths feel off, needs investigation into better sizing strategy (auto-fit content, proportional, min/max constraints, or user-resizable)
 
 ## Detail Panel
-- [ ] **79.** Bug: detail panel doesn't refresh when poller data updates, only when row selection changes — must navigate away and back to see new messages/status
-- [ ] **34.** Recent activity log: timestamped feed of recent events (tool calls, messages) for the selected session `PR-R`
-- [ ] **70.** Expanded status context in the detail panel: show the full story behind the current status label. E.g. `editing` → file path being edited, `needs input` → the question text, `awaiting plan` → plan summary, `running cmd` → the command, `error: rate_limit` → error details, `searching web` → query. Pull from hook JSON fields (`tool_input`, `last_assistant_message`, `error_details`, `message`) `PR-R`
+- [x] **79.** Bug: detail panel doesn't refresh when poller data updates, only when row selection changes — must navigate away and back to see new messages/status — [#31](https://github.com/DeanLa/cctop/pull/31)
+- [x] **34.** Recent activity log: timestamped feed of recent events (tool calls, messages) for the selected session `PR-R` — [#31](https://github.com/DeanLa/cctop/pull/31)
+- [x] **70.** Expanded status context in the detail panel: show the full story behind the current status label. E.g. `editing` → file path being edited, `needs input` → the question text, `awaiting plan` → plan summary, `running cmd` → the command, `error: rate_limit` → error details, `searching web` → query. Pull from hook JSON fields (`tool_input`, `last_assistant_message`, `error_details`, `message`) `PR-R` — [#31](https://github.com/DeanLa/cctop/pull/31)
 
 ## Session Actions
 - [ ] **18.** Add rename session action from the dashboard, see [`plans/rename-session-externally.md`](plans/rename-session-externally.md) — blocked: running sessions don't pick up external title changes *(was PR-F, deferred)*
