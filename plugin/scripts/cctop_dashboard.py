@@ -32,7 +32,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.coordinate import Coordinate
 from textual.geometry import Region
 from textual.widgets import DataTable, Footer, Header, OptionList, Static
@@ -51,6 +51,7 @@ _CONFIG_DEFAULTS: dict = {
     "sort": {"column": "activity", "reverse": True},
     "columns": {"hidden": ["errors", "started", "stop_reason", "tokens", "effort", "cost"]},
     "group": {"by": ""},
+    "activity": {"visible": False, "width": 40},
 }
 
 
@@ -128,6 +129,33 @@ def _clean_user_msg(msg: str) -> str:
     return msg
 
 
+def _format_event_time(iso_str: str) -> str:
+    """Convert ISO timestamp to short local time (HH:MM)."""
+    if not iso_str:
+        return "     "
+    try:
+        ts = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        return ts.astimezone().strftime("%H:%M")
+    except (ValueError, TypeError):
+        return "     "
+
+
+def _shorten_path(path: str) -> str:
+    """Show last 2 path components for file paths, or the string as-is."""
+    if "/" not in path:
+        return path
+    parts = Path(path).parts
+    return str(Path(*parts[-2:])) if len(parts) > 2 else path
+
+
+def _truncate(text: str, limit: int = 60) -> str:
+    """Truncate text at a word boundary."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0] or text[:limit]
+    return cut + "…"
+
+
 def _render_message(
     label: str, text: str | None, max_chars: int = 500
 ) -> list[Text | RichMarkdown]:
@@ -168,7 +196,7 @@ STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "tool:Grep": ("cyan", "searching"),
     "tool:EnterPlanMode": ("blue", "entering plan"),
     "tool:ExitPlanMode": ("blue", "exiting plan"),
-    "tool:AskUserQuestion": ("#ff8700", "asking user"),
+    "tool:AskUserQuestion": ("#ff5f5f", "asking user"),
     "tool:EnterWorktree": ("blue", "entering worktree"),
     "tool:ExitWorktree": ("blue", "exiting worktree"),
     "tool:TaskCreate": ("#af87ff", "creating task"),
@@ -179,6 +207,16 @@ STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "tool:TeamCreate": ("#af87ff", "creating team"),
     "tool:Skill": ("#af87ff", "running skill"),
     "ended": ("dim", "ended"),
+}
+
+# Activity feed: icon + color per event type, single source of truth.
+ACTIVITY_STYLE: dict[str, tuple[str, str]] = {
+    "user": ("▸", "green"),
+    "assistant": ("◂", "yellow"),
+    "system": ("→", "dim italic"),
+    "tool": ("⚙", "cyan"),
+    "tool:AskUserQuestion": ("⚙", "#ff5f5f"),
+    "slash_cmd": ("", "#af87ff bold"),
 }
 
 
@@ -371,6 +409,8 @@ class SessionInfo:
     error_details: str = ""
     tool_failures: int = 0
     effort_level: str = ""
+    status_context: str = ""
+    recent_events: list = field(default_factory=list)
 
     @property
     def context_tokens(self) -> int:
@@ -683,6 +723,7 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         error_type=hook.get("error_type", ""),
         error_details=hook.get("error_details", ""),
         tool_failures=hook.get("tool_failures", 0),
+        status_context=hook.get("status_context", ""),
         # Poller-only fields
         slug=poller.get("slug", ""),
         git_branch=poller.get("git_branch", ""),
@@ -709,6 +750,7 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         subagent_cache_read_tokens=poller.get("subagent_cache_read_tokens", 0),
         subagent_cache_creation_tokens=poller.get("subagent_cache_creation_tokens", 0),
         effort_level=poller.get("effort_level", ""),
+        recent_events=poller.get("recent_events", []),
         # Poller preferred, hook fallback
         tool_count=poller.get("tool_count", 0) or hook.get("tool_count", 0),
         model=poller.get("model", "") or hook.get("model", ""),
@@ -1164,6 +1206,12 @@ class SessionsDashboard(App):
     TITLE = "Claude Sessions"
 
     CSS = """
+    #main-area {
+        height: 1fr;
+    }
+    #main-left {
+        width: 1fr;
+    }
     #status-bar {
         height: 1;
         background: $surface;
@@ -1175,12 +1223,18 @@ class SessionsDashboard(App):
     #detail-panels {
         height: 12;
     }
+    #detail-activity-scroll {
+        width: 40;
+        padding: 0 1;
+        color: $text-muted;
+        border-left: solid $surface-lighten-2;
+    }
     #detail-chat-scroll, #detail-info-scroll {
         width: 1fr;
         padding: 0 1;
         color: $text-muted;
     }
-    #detail-chat, #detail-info {
+    #detail-activity, #detail-chat, #detail-info {
         height: auto;
     }
     DataTable {
@@ -1213,6 +1267,8 @@ class SessionsDashboard(App):
         Binding("a", "tmux_attach", "Tmux Attach"),
         Binding("g", "group_by_picker", "Group"),
         Binding("G", "clear_group_by", "Ungroup"),
+        Binding("v", "toggle_activity", "Activity"),
+        Binding("V", "expand_activity", "Activity++"),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
@@ -1221,16 +1277,20 @@ class SessionsDashboard(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield _CctopTable(id="table")
-        yield Static("", id="health-bar")
-        with Horizontal(id="status-bar"):
-            yield Static("", id="status-left")
-            yield Static("", id="status-right")
-        with Horizontal(id="detail-panels"):
-            with VerticalScroll(id="detail-chat-scroll"):
-                yield Static("", id="detail-chat")
-            with VerticalScroll(id="detail-info-scroll"):
-                yield Static("", id="detail-info")
+        with Horizontal(id="main-area"):
+            with Vertical(id="main-left"):
+                yield _CctopTable(id="table")
+                yield Static("", id="health-bar")
+                with Horizontal(id="status-bar"):
+                    yield Static("", id="status-left")
+                    yield Static("", id="status-right")
+                with Horizontal(id="detail-panels"):
+                    with VerticalScroll(id="detail-chat-scroll"):
+                        yield Static("", id="detail-chat")
+                    with VerticalScroll(id="detail-info-scroll"):
+                        yield Static("", id="detail-info")
+            with VerticalScroll(id="detail-activity-scroll"):
+                yield Static("", id="detail-activity")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1243,6 +1303,11 @@ class SessionsDashboard(App):
         self.sort_mode = sort_cfg.get("column", "activity")
         self.sort_reverse = sort_cfg.get("reverse", True)
         self.group_by = cfg.get("group", {}).get("by", "")
+        activity_cfg = cfg.get("activity", {})
+        panel = self.query_one("#detail-activity-scroll")
+        panel.display = activity_cfg.get("visible", False)
+        w = activity_cfg.get("width", 40)
+        panel.styles.width = "50%" if str(w) in ("50%", "50w") else 40
         self._setup_table()
         self._config_loaded = True
         self._schedule_refresh()
@@ -1397,6 +1462,41 @@ class SessionsDashboard(App):
                 self.group_by = result
 
         self.push_screen(GroupPicker(self.group_by), callback=_on_dismiss)
+
+    def _save_activity_config(self, panel) -> None:
+        """Persist activity panel state to config."""
+        # Textual represents 50% as "50w" internally; normalize to our format
+        raw = str(panel.styles.width) if panel.display else "40"
+        w = "50%" if raw in ("50%", "50w") else 40
+        save_config({"activity": {"visible": panel.display, "width": w}})
+
+    def _is_activity_wide(self) -> bool:
+        panel = self.query_one("#detail-activity-scroll")
+        return panel.display and str(panel.styles.width) in ("50%", "50w")
+
+    def action_toggle_activity(self) -> None:
+        """Toggle narrow activity panel, or shrink from wide."""
+        panel = self.query_one("#detail-activity-scroll")
+        if self._is_activity_wide():
+            panel.styles.width = 40
+        elif panel.display:
+            panel.display = False
+        else:
+            panel.styles.width = 40
+            panel.display = True
+        self._save_activity_config(panel)
+
+    def action_expand_activity(self) -> None:
+        """Toggle wide activity panel, or expand from narrow."""
+        panel = self.query_one("#detail-activity-scroll")
+        if self._is_activity_wide():
+            panel.display = False
+        elif panel.display:
+            panel.styles.width = "50%"
+        else:
+            panel.styles.width = "50%"
+            panel.display = True
+        self._save_activity_config(panel)
 
     def action_clear_group_by(self) -> None:
         """Remove grouping and return to flat view."""
@@ -1622,6 +1722,13 @@ class SessionsDashboard(App):
         self._repopulate_table()
         self._update_subtitle()
         self._update_health_bar()
+        # Refresh detail panels for the currently highlighted session
+        table = self.query_one(DataTable)
+        if table.cursor_row is not None and table.row_count > 0:
+            row_key, _ = table.coordinate_to_cell_key(Coordinate(table.cursor_row, 0))
+            session = self._find_session(row_key)
+            if session:
+                self._update_detail_panels(session)
 
     def _update_subtitle(self) -> None:
         """Update the header subtitle with session count, group, and sort info."""
@@ -1776,6 +1883,20 @@ class SessionsDashboard(App):
         def _add(label: str, markup: str) -> None:
             tbl.add_row(label, Text.from_markup(markup))
 
+        # Status with context
+        status_text = styled_status(s)
+        if s.status_context:
+            ctx = s.status_context
+            if len(ctx) > 60:
+                ctx = ctx[:60] + "…"
+            if "/" in ctx:
+                ctx = _shorten_path(ctx)
+            tbl.add_row("Status", Text.assemble(
+                status_text, " ", Text(f"· {ctx}", style="dim"),
+            ))
+        else:
+            tbl.add_row("Status", status_text)
+
         # Timing
         start = format_start_time(s.started_at) if s.started_at else ""
         dur = format_duration(s.started_at) if s.started_at else ""
@@ -1838,15 +1959,59 @@ class SessionsDashboard(App):
 
     @staticmethod
     def _build_chat(session: SessionInfo) -> Group:
-        """Assemble the Rich renderable for the chat panel (left)."""
+        """Assemble the Rich renderable for the chat panel (center)."""
         parts: list = []
         parts.extend(_render_message("User", session.last_user_msg, 300))
         parts.extend(_render_message("Claude", session.last_assistant_msg, 800))
         if session.last_system_msg:
-            parts.append(Text.from_markup(
-                f"[dim italic]\u2192 {session.last_system_msg}[/dim italic]"
-            ))
+            msg = session.last_system_msg
+            if msg.startswith("/"):
+                cmd, _, args = msg.partition(" ")
+                args_str = f" [dim italic]{args}[/]" if args else ""
+                parts.append(Text.from_markup(
+                    f"[dim italic]\u2192[/] [#af87ff bold]{cmd}[/]{args_str}"
+                ))
+            else:
+                parts.append(Text.from_markup(
+                    f"[dim italic]\u2192 {msg}[/dim italic]"
+                ))
         return Group(*parts)
+
+    @staticmethod
+    def _build_activity(session: SessionInfo) -> Group:
+        """Assemble the timestamped activity feed for the left panel."""
+        if not session.recent_events:
+            return Group(Text.from_markup("[dim]No recent activity[/dim]"))
+
+        slash_c = ACTIVITY_STYLE["slash_cmd"][1]
+        lines: list[Text] = []
+        for ev in reversed(session.recent_events):
+            ts = _format_event_time(ev.get("ts", ""))
+            ev_type = ev.get("type", "")
+            detail = ev.get("detail", "")
+
+            if ev_type == "tool":
+                name = ev.get("name", "?")
+                icon, c = ACTIVITY_STYLE.get(f"tool:{name}", ACTIVITY_STYLE["tool"])
+                detail = _shorten_path(detail) if "/" in detail else _truncate(detail)
+                detail_str = f" [dim]{detail}[/dim]" if detail else ""
+                lines.append(Text.from_markup(
+                    f"[dim]{ts}[/dim] [{c}]{icon} {name}[/{c}]{detail_str}"
+                ))
+                continue
+
+            icon, c = ACTIVITY_STYLE.get(ev_type, ("?", "dim"))
+            if ev_type == "system" and detail.startswith("/") and "/" not in detail[1:].split(" ", 1)[0]:
+                cmd, _, args = detail.partition(" ")
+                args_str = f" [{c}]{args}[/]" if args else ""
+                lines.append(Text.from_markup(
+                    f"[dim]{ts}[/dim] [{c}]{icon}[/] [{slash_c}]{cmd}[/]{args_str}"
+                ))
+            else:
+                lines.append(Text.from_markup(
+                    f"[dim]{ts}[/dim] [{c}]{icon} {_truncate(detail)}[/]"
+                ))
+        return Group(*lines)
 
     @staticmethod
     def _build_info(session: SessionInfo) -> RichTable:
@@ -1854,9 +2019,10 @@ class SessionsDashboard(App):
         return SessionsDashboard._detail_session_info(session)
 
     def _clear_detail_panels(self) -> None:
-        """Clear status bar and both detail panels."""
+        """Clear status bar and all detail panels."""
         self.query_one("#status-left", Static).update("")
         self.query_one("#status-right", Static).update("")
+        self.query_one("#detail-activity", Static).update("")
         self.query_one("#detail-chat", Static).update("")
         self.query_one("#detail-info", Static).update("")
 
@@ -1871,21 +2037,25 @@ class SessionsDashboard(App):
         self._collapsed_groups.symmetric_difference_update({group_name})
         self._repopulate_table()
 
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        """Show detail for the highlighted row."""
-        session = self._find_session(event.row_key)
-        if session is None:
-            self._clear_detail_panels()
-            return
+    def _update_detail_panels(self, session: SessionInfo) -> None:
+        """Refresh all detail panels for the given session."""
         self.query_one("#status-left", Static).update(
             Text.from_markup(self._status_left(session))
         )
         self.query_one("#status-right", Static).update(
             Text.from_markup(self._status_right(session))
         )
+        self.query_one("#detail-activity", Static).update(self._build_activity(session))
         self.query_one("#detail-chat", Static).update(self._build_chat(session))
         self.query_one("#detail-info", Static).update(self._build_info(session))
-        # Refresh footer to update binding visibility based on new selection
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Show detail for the highlighted row."""
+        session = self._find_session(event.row_key)
+        if session is None:
+            self._clear_detail_panels()
+            return
+        self._update_detail_panels(session)
         self.refresh_bindings()
 
 
