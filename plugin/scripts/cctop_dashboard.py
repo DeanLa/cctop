@@ -51,6 +51,7 @@ _CONFIG_DEFAULTS: dict = {
     "sort": {"column": "activity", "reverse": True},
     "columns": {"hidden": ["errors", "started", "stop_reason", "tokens", "effort", "cost"]},
     "group": {"by": ""},
+    "activity": {"visible": False, "width": 40},
 }
 
 
@@ -147,6 +148,14 @@ def _shorten_path(path: str) -> str:
     return str(Path(*parts[-2:])) if len(parts) > 2 else path
 
 
+def _truncate(text: str, limit: int = 60) -> str:
+    """Truncate text at a word boundary."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0] or text[:limit]
+    return cut + "…"
+
+
 def _render_message(
     label: str, text: str | None, max_chars: int = 500
 ) -> list[Text | RichMarkdown]:
@@ -187,7 +196,7 @@ STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "tool:Grep": ("cyan", "searching"),
     "tool:EnterPlanMode": ("blue", "entering plan"),
     "tool:ExitPlanMode": ("blue", "exiting plan"),
-    "tool:AskUserQuestion": ("#ff8700", "asking user"),
+    "tool:AskUserQuestion": ("#ff5f5f", "asking user"),
     "tool:EnterWorktree": ("blue", "entering worktree"),
     "tool:ExitWorktree": ("blue", "exiting worktree"),
     "tool:TaskCreate": ("#af87ff", "creating task"),
@@ -198,6 +207,16 @@ STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "tool:TeamCreate": ("#af87ff", "creating team"),
     "tool:Skill": ("#af87ff", "running skill"),
     "ended": ("dim", "ended"),
+}
+
+# Activity feed: icon + color per event type, single source of truth.
+ACTIVITY_STYLE: dict[str, tuple[str, str]] = {
+    "user": ("▸", "green"),
+    "assistant": ("◂", "yellow"),
+    "system": ("→", "dim italic"),
+    "tool": ("⚙", "cyan"),
+    "tool:AskUserQuestion": ("⚙", "#ff5f5f"),
+    "slash_cmd": ("", "#af87ff bold"),
 }
 
 
@@ -1249,6 +1268,7 @@ class SessionsDashboard(App):
         Binding("g", "group_by_picker", "Group"),
         Binding("G", "clear_group_by", "Ungroup"),
         Binding("v", "toggle_activity", "Activity"),
+        Binding("V", "expand_activity", "Activity++"),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
@@ -1283,6 +1303,11 @@ class SessionsDashboard(App):
         self.sort_mode = sort_cfg.get("column", "activity")
         self.sort_reverse = sort_cfg.get("reverse", True)
         self.group_by = cfg.get("group", {}).get("by", "")
+        activity_cfg = cfg.get("activity", {})
+        panel = self.query_one("#detail-activity-scroll")
+        panel.display = activity_cfg.get("visible", False)
+        w = activity_cfg.get("width", 40)
+        panel.styles.width = "50%" if str(w) in ("50%", "50w") else 40
         self._setup_table()
         self._config_loaded = True
         self._schedule_refresh()
@@ -1438,10 +1463,40 @@ class SessionsDashboard(App):
 
         self.push_screen(GroupPicker(self.group_by), callback=_on_dismiss)
 
-    def action_toggle_activity(self) -> None:
-        """Toggle the activity panel visibility."""
+    def _save_activity_config(self, panel) -> None:
+        """Persist activity panel state to config."""
+        # Textual represents 50% as "50w" internally; normalize to our format
+        raw = str(panel.styles.width) if panel.display else "40"
+        w = "50%" if raw in ("50%", "50w") else 40
+        save_config({"activity": {"visible": panel.display, "width": w}})
+
+    def _is_activity_wide(self) -> bool:
         panel = self.query_one("#detail-activity-scroll")
-        panel.display = not panel.display
+        return panel.display and str(panel.styles.width) in ("50%", "50w")
+
+    def action_toggle_activity(self) -> None:
+        """Toggle narrow activity panel, or shrink from wide."""
+        panel = self.query_one("#detail-activity-scroll")
+        if self._is_activity_wide():
+            panel.styles.width = 40
+        elif panel.display:
+            panel.display = False
+        else:
+            panel.styles.width = 40
+            panel.display = True
+        self._save_activity_config(panel)
+
+    def action_expand_activity(self) -> None:
+        """Toggle wide activity panel, or expand from narrow."""
+        panel = self.query_one("#detail-activity-scroll")
+        if self._is_activity_wide():
+            panel.display = False
+        elif panel.display:
+            panel.styles.width = "50%"
+        else:
+            panel.styles.width = "50%"
+            panel.display = True
+        self._save_activity_config(panel)
 
     def action_clear_group_by(self) -> None:
         """Remove grouping and return to flat view."""
@@ -1909,9 +1964,17 @@ class SessionsDashboard(App):
         parts.extend(_render_message("User", session.last_user_msg, 300))
         parts.extend(_render_message("Claude", session.last_assistant_msg, 800))
         if session.last_system_msg:
-            parts.append(Text.from_markup(
-                f"[dim italic]\u2192 {session.last_system_msg}[/dim italic]"
-            ))
+            msg = session.last_system_msg
+            if msg.startswith("/"):
+                cmd, _, args = msg.partition(" ")
+                args_str = f" [dim italic]{args}[/]" if args else ""
+                parts.append(Text.from_markup(
+                    f"[dim italic]\u2192[/] [#af87ff bold]{cmd}[/]{args_str}"
+                ))
+            else:
+                parts.append(Text.from_markup(
+                    f"[dim italic]\u2192 {msg}[/dim italic]"
+                ))
         return Group(*parts)
 
     @staticmethod
@@ -1920,34 +1983,33 @@ class SessionsDashboard(App):
         if not session.recent_events:
             return Group(Text.from_markup("[dim]No recent activity[/dim]"))
 
+        slash_c = ACTIVITY_STYLE["slash_cmd"][1]
         lines: list[Text] = []
         for ev in reversed(session.recent_events):
             ts = _format_event_time(ev.get("ts", ""))
             ev_type = ev.get("type", "")
             detail = ev.get("detail", "")
-            if ev_type == "user":
-                lines.append(Text.from_markup(
-                    f"[dim]{ts}[/dim] [green]▸ {detail}[/green]"
-                ))
-            elif ev_type == "assistant":
-                if len(detail) > 60:
-                    detail = detail[:60] + "…"
-                lines.append(Text.from_markup(
-                    f"[dim]{ts}[/dim] [yellow]◂ {detail}[/yellow]"
-                ))
-            elif ev_type == "system":
-                lines.append(Text.from_markup(
-                    f"[dim]{ts}[/dim] [dim italic]→ {detail}[/dim italic]"
-                ))
-            else:
+
+            if ev_type == "tool":
                 name = ev.get("name", "?")
-                if detail and "/" in detail:
-                    detail = _shorten_path(detail)
-                elif len(detail) > 60:
-                    detail = detail[:60] + "…"
+                icon, c = ACTIVITY_STYLE.get(f"tool:{name}", ACTIVITY_STYLE["tool"])
+                detail = _shorten_path(detail) if "/" in detail else _truncate(detail)
                 detail_str = f" [dim]{detail}[/dim]" if detail else ""
                 lines.append(Text.from_markup(
-                    f"[dim]{ts}[/dim] [cyan]{name}[/cyan]{detail_str}"
+                    f"[dim]{ts}[/dim] [{c}]{icon} {name}[/{c}]{detail_str}"
+                ))
+                continue
+
+            icon, c = ACTIVITY_STYLE.get(ev_type, ("?", "dim"))
+            if ev_type == "system" and detail.startswith("/") and "/" not in detail[1:].split(" ", 1)[0]:
+                cmd, _, args = detail.partition(" ")
+                args_str = f" [{c}]{args}[/]" if args else ""
+                lines.append(Text.from_markup(
+                    f"[dim]{ts}[/dim] [{c}]{icon}[/] [{slash_c}]{cmd}[/]{args_str}"
+                ))
+            else:
+                lines.append(Text.from_markup(
+                    f"[dim]{ts}[/dim] [{c}]{icon} {_truncate(detail)}[/]"
                 ))
         return Group(*lines)
 
