@@ -5,6 +5,7 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
 ## Table & Columns
 - [ ] **80.** Bug: context usage column always shows `/200k` as the denominator, but context window size varies by model (e.g. Opus 4.6 has 200k default but 1M with extended context, Haiku has 200k, Sonnet has 200k). The denominator should reflect the actual model's context window, parsed from the session's model identifier or transcript metadata.
+- [ ] **84.** Improve column width allocation: current widths feel off, needs investigation into better sizing strategy (auto-fit content, proportional, min/max constraints, or user-resizable)
 
 ## Detail Panel
 - [ ] **79.** Bug: detail panel doesn't refresh when poller data updates, only when row selection changes — must navigate away and back to see new messages/status
@@ -24,13 +25,17 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **42.** Configurable column display order: allow users to reorder columns via config (depends on #36)
 - [ ] **74.** Keyboard shortcuts help: press `?` to open an overlay listing all available keybindings with descriptions
 - [ ] **75.** Totals/summary bar: show aggregate metrics across all visible sessions (total cost, total tokens, session count) with breakdowns by model and project
-- [ ] **76.** Session filtering: filter table rows by project, model, status, or other column values (e.g. a filter bar or `/` search)
+- [ ] **76.** Live session filter: as-you-type text filtering across all visible columns (like ng-filter), press `/` to open a filter bar that narrows the table in real time
 - [ ] **77.** Full-screen session detail: expand selected session into a dedicated scrollable view with complete message history, activity feed, and all metadata
+- [ ] **83.** Footer keybinding bar overhaul: redesign the bottom bar with better grouping/layout, pair with the `?` help overlay (#74) for a unified keybinding UX
+- [ ] **81.** Move "Purge dead" action out of the footer bar: hide the `R` keybinding from the footer and surface the purge option only in the health warning bar when stale/dead sessions are detected
+- [ ] **85.** Wrap-around row selection: navigating past the last row jumps to the first, and vice versa (pacman loop)
 
 ## Activity & Status Detection
 - [ ] **53.** Classify Bash commands into sub-statuses by inspecting the command string: `testing` (pytest, jest, npm test, go test, cargo test, make test), `building` (npm build, tsc, webpack, cargo build, make, go build), `installing` (pip install, npm install, brew install, cargo add), `linting` (eslint, ruff, black, prettier, mypy), `git op` (git commit/push/pull/rebase/merge), `creating PR` (gh pr create/merge) `PR-Q`
 - [ ] **58.** Detect repeated test→edit cycles and show `debugging` status (e.g. if the last N tool calls alternate between Bash-test and Edit, the session is likely in a fix loop) `PR-Q`
 - [ ] **59.** Show `deploying` status for infrastructure commands (docker, kubectl, terraform, aws, gcloud) `PR-Q`
+- [ ] **82.** Bug: AskUserQuestion hook triggers `awaiting permission` status, but it should show a distinct status (e.g. `needs input`) to differentiate from actual permission prompts (tool approval, write to external folders)
 
 ## Health Check & Teammates
 - [ ] **31.** Teammate detection & grouping: parse `--parent-session-id` from tmux-spawned teammate processes, group under parent session, add `Team` column showing teammate count. Exclude teammates from health check counts. See [`plans/prd-session-health-check.md`](plans/prd-session-health-check.md) `PR-K`
@@ -38,6 +43,9 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
 ## New Frontiers
 - [ ] **33.** Web frontend (Flask/FastAPI serving session-status JSON) *(standalone)*
+
+## Code Quality
+- [ ] **86.** Refactor: extract Rich markup helpers (e.g. `dim(text)` → `f'[dim]{text}[/dim]'`) to reduce inline formatting boilerplate across the dashboard
 
 ## Done
 - [x] **1.** Add `Files` column (count of files edited) `PR-A` — [#4](https://github.com/DeanLa/cctop/pull/4)
