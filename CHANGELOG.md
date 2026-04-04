@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.0 — 2026-04-04
+
+### Detail Panel, The Full Story Behind Every Status
+
+- **Status context**: the detail panel now shows what's behind the status label, the file being edited, the command being run, the question waiting for your answer, the error details, all pulled from hook data so you don't have to switch terminals to find out
+- **Activity log**: timestamped feed of recent events (tool calls, messages, status changes) for the selected session, see what happened without scrolling through the transcript
+- **Live updates**: the detail panel now refreshes automatically when new poller data arrives, no more navigating away and back to see the latest
+
 ## v0.4.0 — 2026-04-04
 
 ### Group-By View, Organize Sessions Your Way
