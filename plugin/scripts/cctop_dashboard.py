@@ -42,7 +42,7 @@ from textual.widgets.option_list import Option
 
 STATUS_DIR = Path.home() / ".cctop"
 CONFIG_PATH = STATUS_DIR / "config.toml"
-CONTEXT_WINDOW = 200_000
+_CONTEXT_WINDOW_DEFAULT = 200_000
 STALE_SECONDS = 60 * 60
 HEALTH_CHECK_INTERVAL = 10.0  # seconds between ps-based health checks
 
@@ -182,6 +182,7 @@ STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
     "resumed": ("#5fd7ff", "resumed"),
     # Permission / input waiting
     "awaiting_permission": ("#ff8700", "awaiting permission"),
+    "awaiting_input": ("#ff5f5f", "awaiting input"),
     "awaiting_mcp_input": ("#ff8700", "awaiting mcp input"),
     # Tools
     "tool:Bash": ("green", "running cmd"),
@@ -235,6 +236,11 @@ def friendly_model_name(model: str) -> str:
         minor = m.group(3)
         return f"{family} {major}.{minor}"
     return model[:12] if model else ""
+
+
+def get_context_window(model: str) -> int:
+    """Return the context window size for a model string."""
+    return 1_000_000 if "[1m]" in model else _CONTEXT_WINDOW_DEFAULT
 
 
 def format_start_time(iso_str: str) -> str:
@@ -518,7 +524,7 @@ COLUMNS: tuple[ColumnDef, ...] = (
     ColumnDef(
         "ctx_pct",
         header="Ctx%",
-        cell=lambda s: f"{s.context_tokens * 100 // CONTEXT_WINDOW}%"
+        cell=lambda s: f"{s.context_tokens * 100 // get_context_window(s.model)}%"
         if s.context_tokens
         else "",
         reverse_sort=True,
@@ -1920,7 +1926,8 @@ class SessionsDashboard(App):
         # Tokens
         ctx = format_tokens(s.context_tokens)
         if ctx:
-            _add("Tokens", f"[cyan]{ctx}[/cyan] ctx")
+            window = format_tokens(get_context_window(s.model))
+            _add("Tokens", f"[cyan]{ctx}[/cyan]/[dim]{window}[/dim] ctx")
 
         # Metrics
         if s.effort_level:

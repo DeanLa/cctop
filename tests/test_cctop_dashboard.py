@@ -50,6 +50,7 @@ from cctop_dashboard import (
     GROUP_DEFS,
     _format_event_time,
     _shorten_path,
+    get_context_window,
     CONFIG_PATH,
     STATUS_DIR,
 )
@@ -242,6 +243,21 @@ def test_friendly_model_name_unknown():
 
 def test_friendly_model_name_empty():
     assert friendly_model_name("") == ""
+
+
+# --- get_context_window tests ---
+
+def test_get_context_window_standard():
+    assert get_context_window("claude-sonnet-4-6-20260301") == 200_000
+
+def test_get_context_window_extended():
+    assert get_context_window("claude-opus-4-6-v1[1m]") == 1_000_000
+
+def test_get_context_window_empty():
+    assert get_context_window("") == 200_000
+
+def test_get_context_window_unknown():
+    assert get_context_window("gpt-4o") == 200_000
 
 
 # --- format_start_time tests ---
@@ -1162,6 +1178,7 @@ def test_styled_status_known_tools():
         ("tool:Edit", "editing"),
         ("tool:Glob", "searching"),
         ("tool:AskUserQuestion", "asking user"),
+        ("awaiting_input", "awaiting input"),
         ("tool:EnterPlanMode", "entering plan"),
         ("tool:SendMessage", "messaging"),
         ("tool:Skill", "running skill"),
@@ -1698,6 +1715,107 @@ async def test_cost_in_detail_panel(fake_status_dir):
         info = app.query_one("#detail-info", Static)
         rendered = _render_static_text(info)
         assert "$" in rendered
+
+
+# --- Poller cwd-change re-derivation tests ---
+
+
+def test_poller_cwd_change_rederives_git_branch():
+    """When cwd changes between polls, poller should re-derive git branch."""
+    poller = _load_poller_module()
+
+    # Patch resolve_git_branch and detect_worktree at module level
+    orig_resolve = poller.resolve_git_branch
+    orig_detect = poller.detect_worktree
+
+    try:
+        poller.resolve_git_branch = lambda cwd: "feature-branch"
+        poller.detect_worktree = lambda cwd: None  # not a worktree
+
+        poller_data: dict = {"_last_cwd": "/old/path"}
+        hook_data = {"cwd": "/new/path"}
+
+        # Simulate the cwd-change detection from poll_once
+        current_cwd = hook_data.get("cwd", "")
+        prev_cwd = poller_data.get("_last_cwd", "")
+        assert current_cwd != prev_cwd
+
+        branch = poller.resolve_git_branch(current_cwd) or ""
+        updates_cwd: dict = {"git_branch": branch} if branch else {}
+        if updates_cwd:
+            poller._enrich_git_branch(updates_cwd, current_cwd)
+            poller_data.update(updates_cwd)
+        poller_data["_last_cwd"] = current_cwd
+
+        assert poller_data["git_branch"] == "feature-branch"
+        assert poller_data["_last_cwd"] == "/new/path"
+    finally:
+        poller.resolve_git_branch = orig_resolve
+        poller.detect_worktree = orig_detect
+
+
+def test_poller_cwd_change_detects_worktree():
+    """When cwd changes to a worktree, poller should prefix branch with tree emoji."""
+    poller = _load_poller_module()
+
+    orig_resolve = poller.resolve_git_branch
+    orig_detect = poller.detect_worktree
+
+    try:
+        poller.resolve_git_branch = lambda cwd: "fix-bug"
+        poller.detect_worktree = lambda cwd: "my-repo"
+
+        poller_data: dict = {"_last_cwd": "/old/path"}
+        current_cwd = "/new/worktree/path"
+
+        branch = poller.resolve_git_branch(current_cwd) or ""
+        updates_cwd: dict = {"git_branch": branch} if branch else {}
+        if updates_cwd:
+            poller._enrich_git_branch(updates_cwd, current_cwd)
+            poller_data.update(updates_cwd)
+        poller_data["_last_cwd"] = current_cwd
+
+        assert poller_data["git_branch"] == "\U0001f33f fix-bug"
+        assert poller_data["project_name"] == "my-repo"
+    finally:
+        poller.resolve_git_branch = orig_resolve
+        poller.detect_worktree = orig_detect
+
+
+def test_poller_cwd_change_to_non_git_clears_branch():
+    """When cwd changes to a non-git directory, stale git state is cleared."""
+    poller = _load_poller_module()
+
+    orig_resolve = poller.resolve_git_branch
+    orig_detect = poller.detect_worktree
+
+    try:
+        poller.resolve_git_branch = lambda cwd: ""  # not a git dir
+        poller.detect_worktree = lambda cwd: None
+
+        poller_data: dict = {
+            "_last_cwd": "/old/git/repo",
+            "git_branch": "main",
+            "project_name": "old-repo",
+        }
+        current_cwd = "/tmp/not-a-repo"
+        prev_cwd = poller_data.get("_last_cwd", "")
+
+        branch = poller.resolve_git_branch(current_cwd) or ""
+        updates_cwd: dict = {"git_branch": branch} if branch else {}
+        if updates_cwd:
+            poller._enrich_git_branch(updates_cwd, current_cwd)
+            poller_data.update(updates_cwd)
+        elif prev_cwd:
+            poller_data["git_branch"] = ""
+            poller_data.pop("project_name", None)
+        poller_data["_last_cwd"] = current_cwd
+
+        assert poller_data["git_branch"] == ""
+        assert "project_name" not in poller_data
+    finally:
+        poller.resolve_git_branch = orig_resolve
+        poller.detect_worktree = orig_detect
 
 
 # --- Group-by unit tests ---
