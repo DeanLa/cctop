@@ -177,6 +177,12 @@ def parse_new_lines(lines: list[str]) -> dict:
                 m = re.search(r"<command-args>(\w+)</command-args>", sys_content)
                 if m:
                     updates["effort_level"] = m.group(1)
+            if "<local-command-stdout>" in sys_content and "Set model to" in sys_content:
+                m = re.search(r"Set model to \x1b\[1m(.*?)\x1b\[22m", sys_content)
+                if not m:
+                    m = re.search(r"Set model to ([^\s<]+)", sys_content)
+                if m:
+                    updates["model"] = m.group(1)
             summary = _parse_system_message(sys_content)
             if summary:
                 updates["last_system_msg"] = summary

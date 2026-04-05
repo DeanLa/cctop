@@ -1686,6 +1686,37 @@ def test_poller_effort_latest_wins():
     assert result.get("effort_level") == "high"
 
 
+def test_poller_extracts_model_from_slash_command():
+    """Poller should extract model from /model command output in transcript."""
+    parse_new_lines = _load_poller_module().parse_new_lines
+
+    # Actual format: ANSI bold escape wraps the model string
+    model_line = json.dumps({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": "<local-command-stdout>Set model to \x1b[1mclaude-opus-4-6-v1[1m]\x1b[22m</local-command-stdout>",
+        },
+    })
+    result = parse_new_lines([model_line])
+    assert result.get("model") == "claude-opus-4-6-v1[1m]"
+
+
+def test_poller_extracts_model_without_ansi():
+    """Poller should extract model even without ANSI escapes (fallback)."""
+    parse_new_lines = _load_poller_module().parse_new_lines
+
+    model_line = json.dumps({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": "<local-command-stdout>Set model to claude-sonnet-4-6-20260301</local-command-stdout>",
+        },
+    })
+    result = parse_new_lines([model_line])
+    assert result.get("model") == "claude-sonnet-4-6-20260301"
+
+
 # --- TUI effort/cost column tests ---
 
 @pytest.mark.asyncio
