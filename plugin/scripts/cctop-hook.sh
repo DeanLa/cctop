@@ -139,7 +139,14 @@ case "$EVENT" in
         SUBAGENT_TYPE="$AGENT_TYPE" ;;
     Notification)
         case "$NOTIFICATION_TYPE" in
-            permission_prompt)  STATUS="awaiting_permission" ;;
+            permission_prompt)
+                # AskUserQuestion also triggers permission_prompt, but
+                # should show a distinct status from actual tool approvals.
+                if [ "$LAST_TOOL" = "AskUserQuestion" ]; then
+                    STATUS="awaiting_input"
+                else
+                    STATUS="awaiting_permission"
+                fi ;;
             elicitation_dialog) STATUS="awaiting_mcp_input" ;;
             *)                  exit 0 ;;  # Ignore other notification types
         esac
@@ -153,8 +160,11 @@ case "$EVENT" in
         STATUS=$(echo "$EXISTING" | jq -r '.status // "thinking"' 2>/dev/null)
         TOOL=$(echo "$EXISTING" | jq -r '.current_tool // ""' 2>/dev/null) ;;
     CwdChanged)
-        # Update cwd, preserve status
+        # Update cwd, preserve status. Clear TRANSCRIPT_PATH so the jq
+        # merge preserves the original value (transcripts don't move when
+        # entering/leaving worktrees).
         CWD="$NEW_CWD"
+        TRANSCRIPT_PATH=""
         STATUS=$(echo "$EXISTING" | jq -r '.status // "unknown"' 2>/dev/null)
         TOOL=$(echo "$EXISTING" | jq -r '.current_tool // ""' 2>/dev/null) ;;
     *)

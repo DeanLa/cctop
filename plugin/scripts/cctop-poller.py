@@ -177,6 +177,12 @@ def parse_new_lines(lines: list[str]) -> dict:
                 m = re.search(r"<command-args>(\w+)</command-args>", sys_content)
                 if m:
                     updates["effort_level"] = m.group(1)
+            if "<local-command-stdout>" in sys_content and "Set model to" in sys_content:
+                m = re.search(r"Set model to \x1b\[1m(.*?)\x1b\[22m", sys_content)
+                if not m:
+                    m = re.search(r"Set model to ([^\s<]+)", sys_content)
+                if m:
+                    updates["model"] = m.group(1)
             summary = _parse_system_message(sys_content)
             if summary:
                 updates["last_system_msg"] = summary
@@ -566,6 +572,21 @@ def detect_worktree(cwd: str) -> str | None:
         return None
 
 
+def _enrich_git_branch(updates: dict, cwd: str) -> None:
+    """Resolve detached HEAD and detect worktrees for a git_branch update.
+
+    Mutates *updates* in place: resolves HEAD to a meaningful name, prefixes
+    with 🌿 for worktrees, and sets project_name to the original repo name.
+    """
+    if updates.get("git_branch") == "HEAD":
+        updates["git_branch"] = resolve_git_branch(cwd) or ""
+    if cwd:
+        repo_name = detect_worktree(cwd)
+        if repo_name and updates.get("git_branch"):
+            updates["git_branch"] = "\U0001f33f " + updates["git_branch"]
+            updates["project_name"] = repo_name
+
+
 # --- Main loop ---
 
 
@@ -660,20 +681,29 @@ def poll_once() -> None:
             # For worktrees, prefix branch with 🌿 and override project_name
             # to show the original repo name instead of the worktree dir.
             if "git_branch" in updates:
-                cwd = hook_data.get("cwd", "")
-                if updates["git_branch"] == "HEAD":
-                    # resolve_git_branch returns None only when not a git
-                    # repo (rev-parse --short HEAD always succeeds otherwise),
-                    # so clearing to "" is correct for non-repo directories.
-                    updates["git_branch"] = resolve_git_branch(cwd) or ""
-                if cwd:
-                    repo_name = detect_worktree(cwd)
-                    if repo_name and updates["git_branch"]:
-                        updates["git_branch"] = "\U0001f33f " + updates["git_branch"]
-                        updates["project_name"] = repo_name
+                _enrich_git_branch(updates, hook_data.get("cwd", ""))
 
             _accumulate_deltas(poller_data, updates)
             poller_data.update(updates)
+            changed = True
+
+        # Re-derive git branch/worktree when cwd changes (e.g. session
+        # resumed into a worktree via CwdChanged hook). The transcript
+        # won't emit a new gitBranch line, so the enrichment above won't
+        # fire. Detect the change and force a re-derivation.
+        current_cwd = hook_data.get("cwd", "")
+        prev_cwd = poller_data.get("_last_cwd", "")
+        if current_cwd and current_cwd != prev_cwd:
+            branch = resolve_git_branch(current_cwd) or ""
+            updates_cwd: dict = {"git_branch": branch} if branch else {}
+            if updates_cwd:
+                _enrich_git_branch(updates_cwd, current_cwd)
+                poller_data.update(updates_cwd)
+            elif prev_cwd:
+                # Moved to a non-git dir: clear stale git state
+                poller_data["git_branch"] = ""
+                poller_data.pop("project_name", None)
+            poller_data["_last_cwd"] = current_cwd
             changed = True
 
         # Restore frozen counters after full re-read so only the targeted
