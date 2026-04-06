@@ -4,13 +4,11 @@ Items tagged with `PR-X` are assigned to a PR group, see [plans/pr-groups.md](pl
 When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
 ## Table & Columns
-- [ ] **80.** Bug: context usage column always shows `/200k` as the denominator, but context window size varies by model (e.g. Opus 4.6 has 200k default but 1M with extended context, Haiku has 200k, Sonnet has 200k). The denominator should reflect the actual model's context window, parsed from the session's model identifier or transcript metadata.
-- [ ] **84.** Improve column width allocation: current widths feel off, needs investigation into better sizing strategy (auto-fit content, proportional, min/max constraints, or user-resizable)
+- [ ] **84.** Improve column width allocation: current widths feel off, needs investigation into better sizing strategy (auto-fit content, proportional, min/max constraints, or user-resizable) `PR-S`
 
 ## Detail Panel
-- [x] **79.** Bug: detail panel doesn't refresh when poller data updates, only when row selection changes — must navigate away and back to see new messages/status — [#31](https://github.com/DeanLa/cctop/pull/31)
-- [x] **34.** Recent activity log: timestamped feed of recent events (tool calls, messages) for the selected session `PR-R` — [#31](https://github.com/DeanLa/cctop/pull/31)
-- [x] **70.** Expanded status context in the detail panel: show the full story behind the current status label. E.g. `editing` → file path being edited, `needs input` → the question text, `awaiting plan` → plan summary, `running cmd` → the command, `error: rate_limit` → error details, `searching web` → query. Pull from hook JSON fields (`tool_input`, `last_assistant_message`, `error_details`, `message`) `PR-R` — [#31](https://github.com/DeanLa/cctop/pull/31)
+- [ ] **77.** Full-screen session detail: expand selected session into a dedicated scrollable view with complete message history, activity feed, and all metadata `PR-U`
+- [ ] **88.** Activity-Chat panel interaction: selecting a user or assistant message in the activity feed navigates the chat panel to that message pair (user before assistant, assistant after user). Tool entries are not selectable for now. Needs a way to return to real-time/latest view (TBD). `PR-U`
 
 ## Session Actions
 - [ ] **18.** Add rename session action from the dashboard, see [`plans/rename-session-externally.md`](plans/rename-session-externally.md) — blocked: running sessions don't pick up external title changes *(was PR-F, deferred)*
@@ -18,24 +16,24 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **47.** Tmux attach: add env var gate (`os.environ.get("TMUX")`) to `check_action` so the `a` binding is hidden entirely when cctop isn't in tmux, keep per-session `tmux_session` check as second layer
 
 ## Session Lifecycle
-- [ ] **78.** Bug: `CwdChanged` hook overwrites `transcript_path` with a path based on the new cwd, but transcripts don't move — breaks message tracking when entering worktrees. Fix: clear `TRANSCRIPT_PATH` in the `CwdChanged` case so the jq expression preserves the original value.
+- [ ] **89.** Bug: transcript compaction wipes poller-derived state (messages, tokens, activity timeline). After context compression, the JSONL transcript is truncated to a few lines and the poller offset matches, so no new data is parsed. Poller fields like `last_user_message`, `context_tokens`, and `recent_events` go stale while the hook file keeps updating. Possible fix: detect inode change or size shrink as a compaction signal and re-parse from offset 0, or fall back to hook-owned fields for activity recency.
+- [ ] **90.** Low-priority bug: on session resume (`claude -c`/`-r`) into a worktree, there's a brief flash of the `main` branch before cctop self-corrects. Caused by a race: `SessionStart` fires with the pre-worktree cwd, and the poller may run before `CwdChanged` updates it. The cwd-change detection (added in #78 fix) corrects it on the next poll cycle, but the 1-cycle flash remains. Possible fix: defer git enrichment on fresh sessions (no `_last_cwd`) until the cwd stabilises, or have the poller detect `source: "resume"` and wait for CwdChanged.
 - [ ] ~~**22.** Session history, persist ended session stats (tokens, cost, turns, duration) for later querying~~ — removed, no consumer yet
 
 ## UI & Theming
 - [ ] **42.** Configurable column display order: allow users to reorder columns via config (depends on #36)
-- [ ] **74.** Keyboard shortcuts help: press `?` to open an overlay listing all available keybindings with descriptions
-- [ ] **75.** Totals/summary bar: show aggregate metrics across all visible sessions (total cost, total tokens, session count) with breakdowns by model and project
-- [ ] **76.** Live session filter: as-you-type text filtering across all visible columns (like ng-filter), press `/` to open a filter bar that narrows the table in real time
-- [ ] **77.** Full-screen session detail: expand selected session into a dedicated scrollable view with complete message history, activity feed, and all metadata
-- [ ] **83.** Footer keybinding bar overhaul: redesign the bottom bar with better grouping/layout, pair with the `?` help overlay (#74) for a unified keybinding UX
-- [ ] **81.** Move "Purge dead" action out of the footer bar: hide the `R` keybinding from the footer and surface the purge option only in the health warning bar when stale/dead sessions are detected
-- [ ] **85.** Wrap-around row selection: navigating past the last row jumps to the first, and vice versa (pacman loop)
+- [ ] **74.** Keyboard shortcuts help: press `?` to open an overlay listing all available keybindings with descriptions `PR-T`
+- [ ] **75.** Totals/summary bar: show aggregate metrics across all visible sessions (total cost, total tokens, session count) with breakdowns by model and project `PR-V`
+- [ ] **76.** Live session filter: as-you-type text filtering across all visible columns (like ng-filter), press `/` to open a filter bar that narrows the table in real time `PR-V`
+- [ ] **83.** Footer keybinding bar overhaul: redesign the bottom bar with better grouping/layout, pair with the `?` help overlay (#74) for a unified keybinding UX `PR-T`
+- [ ] **81.** Move "Purge dead" action out of the footer bar: hide the `R` keybinding from the footer and surface the purge option only in the health warning bar when stale/dead sessions are detected `PR-V`
+- [ ] **85.** Wrap-around row selection: navigating past the last row jumps to the first, and vice versa (pacman loop) `PR-T`
+- [ ] **87.** Collapse/expand group from any row: when group-by is active, a keybinding (e.g. `x`) on any session row should collapse its parent group. Press again to expand. No need to navigate to the group header row. `PR-T`
 
 ## Activity & Status Detection
 - [ ] **53.** Classify Bash commands into sub-statuses by inspecting the command string: `testing` (pytest, jest, npm test, go test, cargo test, make test), `building` (npm build, tsc, webpack, cargo build, make, go build), `installing` (pip install, npm install, brew install, cargo add), `linting` (eslint, ruff, black, prettier, mypy), `git op` (git commit/push/pull/rebase/merge), `creating PR` (gh pr create/merge) `PR-Q`
 - [ ] **58.** Detect repeated test→edit cycles and show `debugging` status (e.g. if the last N tool calls alternate between Bash-test and Edit, the session is likely in a fix loop) `PR-Q`
 - [ ] **59.** Show `deploying` status for infrastructure commands (docker, kubectl, terraform, aws, gcloud) `PR-Q`
-- [ ] **82.** Bug: AskUserQuestion hook triggers `awaiting permission` status, but it should show a distinct status (e.g. `needs input`) to differentiate from actual permission prompts (tool approval, write to external folders)
 
 ## Health Check & Teammates
 - [ ] **31.** Teammate detection & grouping: parse `--parent-session-id` from tmux-spawned teammate processes, group under parent session, add `Team` column showing teammate count. Exclude teammates from health check counts. See [`plans/prd-session-health-check.md`](plans/prd-session-health-check.md) `PR-K`
@@ -107,3 +105,9 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [x] **71.** Group-by option: stale/not-stale, group sessions by staleness state (active vs. stale) `PR-M` — [#29](https://github.com/DeanLa/cctop/pull/29)
 - [x] **72.** Group-by option: model, group sessions by their Claude model `PR-M` — [#29](https://github.com/DeanLa/cctop/pull/29)
 - [x] **73.** Group-by option: renamed/not-renamed, group sessions by whether they have a custom title `PR-M` — [#29](https://github.com/DeanLa/cctop/pull/29)
+- [x] **79.** Bug: detail panel doesn't refresh when poller data updates, only when row selection changes — [#31](https://github.com/DeanLa/cctop/pull/31)
+- [x] **34.** Recent activity log: timestamped feed of recent events (tool calls, messages) for the selected session `PR-R` — [#31](https://github.com/DeanLa/cctop/pull/31)
+- [x] **70.** Expanded status context in the detail panel: show the full story behind the current status label `PR-R` — [#31](https://github.com/DeanLa/cctop/pull/31)
+- [x] **78.** Bug: CwdChanged hook overwrites transcript_path and breaks branch/worktree detection on resume — [#32](https://github.com/DeanLa/cctop/pull/32)
+- [x] **80.** Bug: context usage column always shows /200k denominator, now model-aware (1M for extended context) — [#32](https://github.com/DeanLa/cctop/pull/32)
+- [x] **82.** Bug: AskUserQuestion triggers `awaiting permission` instead of distinct `awaiting input` status — [#32](https://github.com/DeanLa/cctop/pull/32)

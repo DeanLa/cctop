@@ -49,6 +49,7 @@ The `reference/` directory contains Claude Code internals documentation, split b
 | `reference/sessions-index.md` | Reading the sessions index, schema, customTitle timing |
 | `reference/plugin-system.md` | Plugin install/dev workflow, manifests, cache, gotchas |
 | `reference/session-data-files.md` | Tool counts and session-status JSON files |
+| `reference/slash-commands.md` | Slash command categories, transcript formats (3 variants), hook invisibility, poller parsing pipeline |
 
 ## Textual TUI Development
 
@@ -80,7 +81,7 @@ Use `release.sh` for version bumps and tagging. The script handles the mechanica
 
 ## Writing Style
 
-- Use commas instead of emdashes (—) in prose
+- Never use emdashes (—) in any language. Use commas in prose, regular dashes (-) in lists.
 
 ### Hebrew Announcements
 
