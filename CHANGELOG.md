@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.1 — 2026-04-06
+
+### Bug Fixes
+
+- **Worktree detection on resume**: resuming a session into a worktree (`claude -c`/`-r`) now correctly re-derives the git branch, worktree indicator, and project name. Previously these stayed stale after CwdChanged events.
+- **Context window denominator**: the Ctx% column now uses 1M as the denominator for extended context sessions (`[1m]` models) instead of always dividing by 200k. The detail panel shows the fraction (e.g. `145k/1M ctx`).
+- **AskUserQuestion status**: when Claude asks you a question via AskUserQuestion, the dashboard now shows "awaiting input" (red) instead of "awaiting permission" (orange), so you can tell it apart from actual tool-approval prompts.
+
 ## v0.5.0 — 2026-04-04
 
 ### Detail Panel, The Full Story Behind Every Status
