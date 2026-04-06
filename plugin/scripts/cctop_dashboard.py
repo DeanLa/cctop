@@ -1116,6 +1116,74 @@ class ConfirmKillScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
+# --- Help overlay ---
+
+_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("Navigation", [
+        ("\u2191/\u2193", "Move row (wraps around)"),
+        ("\u2190/\u2192", "Move column"),
+        ("Enter", "Toggle group collapse"),
+    ]),
+    ("View", [
+        ("s", "Sort by active column"),
+        ("g", "Group by picker"),
+        ("G", "Remove grouping"),
+        ("x", "Collapse/expand group"),
+        ("v", "Toggle activity panel"),
+        ("V", "Wide activity panel"),
+    ]),
+    ("Columns", [
+        ("c", "Column picker"),
+        ("C", "Show all columns"),
+        ("h", "Hide active column"),
+    ]),
+    ("Actions", [
+        ("k", "Kill session"),
+        ("a", "Tmux attach"),
+        ("R", "Purge dead sessions"),
+        ("r", "Force refresh"),
+    ]),
+    ("General", [
+        ("?", "This help"),
+        ("q", "Quit"),
+    ]),
+]
+
+
+class HelpOverlay(ModalScreen[None]):
+    CSS = """
+    HelpOverlay {
+        align: center middle;
+    }
+    #help-panel {
+        width: 52;
+        height: auto;
+        max-height: 28;
+        background: $surface;
+        border: tall $accent;
+        padding: 1 2;
+    }
+    """
+    BINDINGS = [
+        Binding("question_mark", "dismiss_help", "Close", show=False),
+        Binding("escape", "dismiss_help", "Close", show=False),
+        Binding("q", "dismiss_help", "Close", show=False),
+    ]
+
+    def compose(self) -> ComposeResult:
+        lines: list[str] = ["[bold]Keyboard Shortcuts[/bold]\n"]
+        for section, keys in _HELP_SECTIONS:
+            lines.append(f"[bold]{section}[/bold]")
+            for key, desc in keys:
+                lines.append(f"  [reverse] {key:>5} [/reverse]  {desc}")
+            lines.append("")
+        lines.append("[dim]Press ? or esc to close[/dim]")
+        yield Static("\n".join(lines), id="help-panel")
+
+    def action_dismiss_help(self) -> None:
+        self.dismiss(None)
+
+
 # --- DataTable subclass for column indicator ---
 
 
@@ -1147,24 +1215,35 @@ class _CctopTable(DataTable):
         except Exception:
             return False
 
+    def _find_session_row(self, start: int, direction: int) -> int | None:
+        """Scan from *start* in *direction* (+1/-1) looking for a session row.
+
+        Wraps around the table. Returns the row index, or None if every row
+        is a group header (shouldn't happen in practice).
+        """
+        n = self.row_count
+        if n == 0:
+            return None
+        for i in range(n):
+            idx = (start + direction * i) % n
+            if not self._is_non_session_row(idx):
+                return idx
+        return None
+
     def action_cursor_up(self) -> None:
-        prev = self.cursor_coordinate.row
-        super().action_cursor_up()
-        for _ in range(self.row_count):
-            if not self._is_non_session_row(self.cursor_coordinate.row):
-                return
-            super().action_cursor_up()
-        # Couldn't find a session row above — go back
-        self.move_cursor(row=prev)
+        cur = self.cursor_coordinate.row
+        # Wrap: if at top, start scanning from bottom; otherwise from cur-1
+        start = (cur - 1) % self.row_count if self.row_count else 0
+        target = self._find_session_row(start, -1)
+        if target is not None:
+            self.move_cursor(row=target)
 
     def action_cursor_down(self) -> None:
-        prev = self.cursor_coordinate.row
-        super().action_cursor_down()
-        for _ in range(self.row_count):
-            if not self._is_non_session_row(self.cursor_coordinate.row):
-                return
-            super().action_cursor_down()
-        self.move_cursor(row=prev)
+        cur = self.cursor_coordinate.row
+        start = (cur + 1) % self.row_count if self.row_count else 0
+        target = self._find_session_row(start, 1)
+        if target is not None:
+            self.move_cursor(row=target)
 
     def skip_to_session_row(self) -> None:
         """If cursor is on a non-session row, advance to the next session."""
@@ -1273,8 +1352,10 @@ class SessionsDashboard(App):
         Binding("a", "tmux_attach", "Tmux Attach"),
         Binding("g", "group_by_picker", "Group"),
         Binding("G", "clear_group_by", "Ungroup"),
+        Binding("x", "toggle_group_collapse", "Collapse"),
         Binding("v", "toggle_activity", "Activity"),
         Binding("V", "expand_activity", "Activity++"),
+        Binding("question_mark", "show_help", "Help"),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
@@ -1504,12 +1585,37 @@ class SessionsDashboard(App):
             panel.display = True
         self._save_activity_config(panel)
 
+    def action_show_help(self) -> None:
+        """Open the keybinding help overlay."""
+        self.push_screen(HelpOverlay())
+
     def action_clear_group_by(self) -> None:
         """Remove grouping and return to flat view."""
         if not self.group_by:
             self.notify("Not grouped", severity="information")
             return
         self.group_by = ""
+
+    def action_toggle_group_collapse(self) -> None:
+        """Collapse/expand the group that the current row belongs to."""
+        if not self.group_by:
+            return
+        table = self.query_one(_CctopTable)
+        if table.row_count == 0:
+            return
+        row = table.cursor_coordinate.row
+        # Walk upward from current row to find the parent group header
+        for idx in range(row, -1, -1):
+            try:
+                cell_key = table.coordinate_to_cell_key(Coordinate(idx, 0))
+                key = str(cell_key.row_key.value)
+            except Exception:
+                continue
+            if key.startswith(_GROUP_ROW_PREFIX):
+                group_name = key[len(_GROUP_ROW_PREFIX):]
+                self._collapsed_groups.symmetric_difference_update({group_name})
+                self._repopulate_table()
+                return
 
     def action_kill_session(self) -> None:
         """Kill the highlighted session's process."""
