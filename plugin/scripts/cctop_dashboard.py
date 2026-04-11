@@ -35,7 +35,7 @@ from textual.screen import ModalScreen
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.coordinate import Coordinate
 from textual.geometry import Region
-from textual.widgets import DataTable, Footer, Header, OptionList, Static
+from textual.widgets import DataTable, Header, OptionList, Static
 from textual.widgets.option_list import Option
 
 # --- Constants ---
@@ -1116,6 +1116,75 @@ class ConfirmKillScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
+# --- Help overlay ---
+
+_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("Navigation", [
+        ("\u2191/\u2193", "Select session (wraps around)"),
+        ("\u2190/\u2192", "Move column"),
+        ("Enter", "Toggle group collapse"),
+    ]),
+    ("View", [
+        ("s", "Sort by active column"),
+        ("g", "Group by picker"),
+        ("G", "Remove grouping"),
+        ("x", "Collapse/expand group"),
+        ("v", "Toggle activity panel"),
+        ("V", "Wide activity panel"),
+    ]),
+    ("Columns", [
+        ("c", "Column picker"),
+        ("C", "Show all columns"),
+        ("h", "Hide active column"),
+    ]),
+    ("Actions", [
+        ("k", "Kill session"),
+        ("a", "Tmux attach"),
+        ("R", "Purge dead sessions"),
+        ("r", "Force refresh"),
+    ]),
+    ("General", [
+        ("t", "Change theme"),
+        ("?", "This help"),
+        ("q", "Quit"),
+    ]),
+]
+
+
+class HelpOverlay(ModalScreen[None]):
+    CSS = """
+    HelpOverlay {
+        align: center middle;
+    }
+    #help-panel {
+        width: 52;
+        height: auto;
+        max-height: 28;
+        background: $surface;
+        border: tall $accent;
+        padding: 1 2;
+    }
+    """
+    BINDINGS = [
+        Binding("question_mark", "dismiss_help", "Close", show=False),
+        Binding("escape", "dismiss_help", "Close", show=False),
+        Binding("q", "dismiss_help", "Close", show=False),
+    ]
+
+    def compose(self) -> ComposeResult:
+        lines: list[str] = ["[bold]Keyboard Shortcuts[/bold]\n"]
+        for section, keys in _HELP_SECTIONS:
+            lines.append(f"[bold]{section}[/bold]")
+            for key, desc in keys:
+                lines.append(f"  [reverse] {key:>5} [/reverse]  {desc}")
+            lines.append("")
+        lines.append("[dim]Press ? or esc to close[/dim]")
+        yield Static("\n".join(lines), id="help-panel")
+
+    def action_dismiss_help(self) -> None:
+        self.dismiss(None)
+
+
 # --- DataTable subclass for column indicator ---
 
 
@@ -1139,39 +1208,17 @@ class _CctopTable(DataTable):
         if n:
             self.selected_column = (self.selected_column + 1) % n
 
-    def _is_non_session_row(self, row_idx: int) -> bool:
-        """Check if a row index points to a group header."""
-        try:
-            cell_key = self.coordinate_to_cell_key(Coordinate(row_idx, 0))
-            return str(cell_key.row_key.value).startswith(_GROUP_ROW_PREFIX)
-        except Exception:
-            return False
-
     def action_cursor_up(self) -> None:
-        prev = self.cursor_coordinate.row
-        super().action_cursor_up()
-        for _ in range(self.row_count):
-            if not self._is_non_session_row(self.cursor_coordinate.row):
-                return
-            super().action_cursor_up()
-        # Couldn't find a session row above — go back
-        self.move_cursor(row=prev)
+        if self.row_count == 0:
+            return
+        cur = self.cursor_coordinate.row
+        self.move_cursor(row=(cur - 1) % self.row_count)
 
     def action_cursor_down(self) -> None:
-        prev = self.cursor_coordinate.row
-        super().action_cursor_down()
-        for _ in range(self.row_count):
-            if not self._is_non_session_row(self.cursor_coordinate.row):
-                return
-            super().action_cursor_down()
-        self.move_cursor(row=prev)
-
-    def skip_to_session_row(self) -> None:
-        """If cursor is on a non-session row, advance to the next session."""
-        for _ in range(self.row_count):
-            if not self._is_non_session_row(self.cursor_coordinate.row):
-                break
-            super().action_cursor_down()
+        if self.row_count == 0:
+            return
+        cur = self.cursor_coordinate.row
+        self.move_cursor(row=(cur + 1) % self.row_count)
 
     def _should_highlight(self, cursor, target_cell, type_of_cursor):
         if super()._should_highlight(cursor, target_cell, type_of_cursor):
@@ -1258,23 +1305,45 @@ class SessionsDashboard(App):
     #health-bar.visible {
         display: block;
     }
+    #action-bar {
+        height: auto;
+        padding: 0 1;
+        background: $primary;
+        color: $text;
+        text-style: bold;
+        text-align: right;
+        display: none;
+    }
+    #action-bar.visible {
+        display: block;
+    }
+    #footer-bar {
+        dock: bottom;
+        height: 1;
+        background: $accent;
+        color: $text;
+        padding: 0 1;
+    }
     """
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit", show=False, priority=True, system=True),
-        Binding("q", "quit", "Quit"),
-        Binding("r", "force_refresh", "Refresh"),
-        Binding("R", "purge_dead", "Purge dead"),
-        Binding("s", "sort_by_column", "Sort col"),
-        Binding("h", "hide_column", "Hide col"),
-        Binding("c", "show_columns", "Columns"),
-        Binding("C", "show_all_columns", "Show all"),
-        Binding("k", "kill_session", "Kill"),
-        Binding("a", "tmux_attach", "Tmux Attach"),
-        Binding("g", "group_by_picker", "Group"),
-        Binding("G", "clear_group_by", "Ungroup"),
-        Binding("v", "toggle_activity", "Activity"),
-        Binding("V", "expand_activity", "Activity++"),
+        Binding("q", "quit", "Quit", show=False),
+        Binding("r", "force_refresh", "Refresh", show=False),
+        Binding("R", "purge_dead", "Purge dead", show=False),
+        Binding("s", "sort_by_column", "Sort col", show=False),
+        Binding("h", "hide_column", "Hide col", show=False),
+        Binding("c", "show_columns", "Columns", show=False),
+        Binding("C", "show_all_columns", "Show all", show=False),
+        Binding("k", "kill_session", "Kill", show=False),
+        Binding("a", "tmux_attach", "Tmux Attach", show=False),
+        Binding("g", "group_by_picker", "Group", show=False),
+        Binding("G", "clear_group_by", "Ungroup", show=False),
+        Binding("x", "toggle_group_collapse", "Collapse", show=False),
+        Binding("v", "toggle_activity", "Activity", show=False),
+        Binding("V", "expand_activity", "Activity++", show=False),
+        Binding("question_mark", "show_help", "Help", show=False),
+        Binding("t", "change_theme", "Theme", show=False),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
@@ -1287,6 +1356,7 @@ class SessionsDashboard(App):
             with Vertical(id="main-left"):
                 yield _CctopTable(id="table")
                 yield Static("", id="health-bar")
+                yield Static("", id="action-bar")
                 with Horizontal(id="status-bar"):
                     yield Static("", id="status-left")
                     yield Static("", id="status-right")
@@ -1297,7 +1367,7 @@ class SessionsDashboard(App):
                         yield Static("", id="detail-info")
             with VerticalScroll(id="detail-activity-scroll"):
                 yield Static("", id="detail-activity")
-        yield Footer()
+        yield Static("", id="footer-bar")
 
     def on_mount(self) -> None:
         self._config_loaded = False
@@ -1316,6 +1386,7 @@ class SessionsDashboard(App):
         panel.styles.width = "50%" if str(w) in ("50%", "50w") else 40
         self._setup_table()
         self._config_loaded = True
+        self._update_footer()
         self._schedule_refresh()
         self.set_interval(0.5, self._schedule_refresh)
 
@@ -1378,7 +1449,7 @@ class SessionsDashboard(App):
             table.add_row(*cells, key=key)
         self._last_row_keys = [k for k, _ in rows]
         self._restore_cursor(table, saved_key)
-        table.skip_to_session_row()
+
         self._update_column_indicator()
 
     def _update_column_indicator(self) -> None:
@@ -1504,12 +1575,44 @@ class SessionsDashboard(App):
             panel.display = True
         self._save_activity_config(panel)
 
+    def action_show_help(self) -> None:
+        """Open the keybinding help overlay."""
+        self.push_screen(HelpOverlay())
+
     def action_clear_group_by(self) -> None:
         """Remove grouping and return to flat view."""
         if not self.group_by:
             self.notify("Not grouped", severity="information")
             return
         self.group_by = ""
+
+    def action_toggle_group_collapse(self) -> None:
+        """Collapse/expand the group that the current row belongs to."""
+        if not self.group_by:
+            return
+        table = self.query_one(_CctopTable)
+        if table.row_count == 0:
+            return
+        row = table.cursor_coordinate.row
+        # Walk upward from current row to find the parent group header
+        for idx in range(row, -1, -1):
+            try:
+                cell_key = table.coordinate_to_cell_key(Coordinate(idx, 0))
+                key = str(cell_key.row_key.value)
+            except Exception:
+                continue
+            if key.startswith(_GROUP_ROW_PREFIX):
+                group_name = key[len(_GROUP_ROW_PREFIX):]
+                self._collapsed_groups.symmetric_difference_update({group_name})
+                self._repopulate_table()
+                # Restore cursor to the group header row
+                try:
+                    table.move_cursor(
+                        row=table.get_row_index(key)
+                    )
+                except Exception:
+                    pass
+                return
 
     def action_kill_session(self) -> None:
         """Kill the highlighted session's process."""
@@ -1674,6 +1777,7 @@ class SessionsDashboard(App):
         self._collapsed_groups.clear()
         self._repopulate_table()
         self._update_subtitle()
+        self._update_footer()
         self._persist_group()
 
     def _persist_group(self) -> None:
@@ -1736,6 +1840,54 @@ class SessionsDashboard(App):
             if session:
                 self._update_detail_panels(session)
 
+    @staticmethod
+    def _fkey(key: str) -> str:
+        """Format a key for the footer bar (matches Textual Footer look)."""
+        return f"[bold reverse] {key} [/bold reverse]"
+
+    def _selected_session(self) -> SessionInfo | None:
+        """Return the currently highlighted session, or None."""
+        table = self.query_one(_CctopTable)
+        if table.row_count == 0:
+            return None
+        try:
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            return self._find_session(row_key)
+        except Exception:
+            return None
+
+    def _update_footer(self) -> None:
+        """Render the custom footer bar with grouped keybindings."""
+        k = self._fkey
+        sep = " "
+        parts: list[str] = [
+            f"{k('q')} Quit",
+            f"{k('\u2191\u2193')} Session  {k('\u2190\u2192')} Col",
+            f"{k('s')} Sort  {k('g')} Group  {k('c')} Cols",
+        ]
+        if self.group_by:
+            parts[-1] += f"  {k('x')} Fold"
+        parts.append(f"{k('v')} Activity")
+        parts.append(f"{k('k')} Kill")
+        parts.append(f"{k('?')} Help")
+        self.query_one("#footer-bar", Static).update(
+            Text.from_markup(sep.join(parts))
+        )
+
+    def _update_action_bar(self) -> None:
+        """Show/hide the action bar based on selected session context."""
+        bar = self.query_one("#action-bar", Static)
+        session = self._selected_session()
+        if session and session.tmux_session:
+            k = self._fkey
+            bar.update(Text.from_markup(
+                f"{k('a')} Attach to tmux session '{session.tmux_session}'"
+            ))
+            bar.add_class("visible")
+        else:
+            bar.update("")
+            bar.remove_class("visible")
+
     def _update_subtitle(self) -> None:
         """Update the header subtitle with session count, group, and sort info."""
         count = len(self._sessions)
@@ -1752,7 +1904,10 @@ class SessionsDashboard(App):
         """Show or hide the health warning bar based on current health status."""
         bar = self.query_one("#health-bar", Static)
         if self._last_health and self._last_health.has_mismatch:
-            bar.update(self._last_health.message)
+            k = self._fkey
+            bar.update(Text.from_markup(
+                f"{self._last_health.message}  {k('R')} Purge"
+            ))
             bar.add_class("visible")
         else:
             bar.update("")
@@ -1843,7 +1998,7 @@ class SessionsDashboard(App):
             for key, cells in rows:
                 table.add_row(*cells, key=key)
             self._restore_cursor(table, saved_key)
-            table.skip_to_session_row()
+    
             self._last_row_keys = new_keys
 
         if not self._sessions:
@@ -2032,6 +2187,9 @@ class SessionsDashboard(App):
         self.query_one("#detail-activity", Static).update("")
         self.query_one("#detail-chat", Static).update("")
         self.query_one("#detail-info", Static).update("")
+        bar = self.query_one("#action-bar", Static)
+        bar.update("")
+        bar.remove_class("visible")
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Toggle collapse when Enter is pressed on a group header row."""
@@ -2063,7 +2221,7 @@ class SessionsDashboard(App):
             self._clear_detail_panels()
             return
         self._update_detail_panels(session)
-        self.refresh_bindings()
+        self._update_action_bar()
 
 
 if __name__ == "__main__":

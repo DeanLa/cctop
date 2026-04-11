@@ -2223,6 +2223,217 @@ async def test_activity_log_fallback(fake_status_dir):
         assert "hi there" in rendered
 
 
+@pytest.mark.asyncio
+async def test_wraparound_navigation_down(fake_status_dir):
+    """Pressing down on the last row should wrap to the first row."""
+    write_fake_session(fake_status_dir, "wrap-1111", slug="alpha")
+    write_fake_session(fake_status_dir, "wrap-2222", slug="beta")
+    write_fake_session(fake_status_dir, "wrap-3333", slug="gamma")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=3)
+        table = app.query_one(DataTable)
+        # Move to last row
+        table.move_cursor(row=table.row_count - 1)
+        await pilot.pause()
+        last_row = table.cursor_coordinate.row
+        assert last_row == table.row_count - 1
+        # Press down - should wrap to first row
+        await pilot.press("down")
+        await pilot.pause()
+        assert table.cursor_coordinate.row == 0
+
+
+@pytest.mark.asyncio
+async def test_wraparound_navigation_up(fake_status_dir):
+    """Pressing up on the first row should wrap to the last row."""
+    write_fake_session(fake_status_dir, "wrap-4444", slug="alpha")
+    write_fake_session(fake_status_dir, "wrap-5555", slug="beta")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=2)
+        table = app.query_one(DataTable)
+        table.move_cursor(row=0)
+        await pilot.pause()
+        assert table.cursor_coordinate.row == 0
+        # Press up - should wrap to last row
+        await pilot.press("up")
+        await pilot.pause()
+        assert table.cursor_coordinate.row == table.row_count - 1
+
+
+@pytest.mark.asyncio
+async def test_wraparound_navigates_group_headers(fake_status_dir):
+    """Wrap-around should land on group headers (they are navigable)."""
+    write_fake_session(fake_status_dir, "wg-1111", cwd="/tmp/projA", slug="a")
+    write_fake_session(fake_status_dir, "wg-2222", cwd="/tmp/projB", slug="b")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=2)
+        app.group_by = "project"
+        await pilot.pause()
+        await _wait_for_rows(pilot, app, expected=4)  # 2 headers + 2 sessions
+        table = app.query_one(DataTable)
+        # From last row, press down - should wrap to row 0 (group header)
+        table.move_cursor(row=table.row_count - 1)
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert table.cursor_coordinate.row == 0
+
+
+@pytest.mark.asyncio
+async def test_collapse_group_from_session_row(fake_status_dir):
+    """Pressing x on a session row should collapse its parent group."""
+    write_fake_session(fake_status_dir, "cg-1111", cwd="/tmp/projA", slug="a")
+    write_fake_session(fake_status_dir, "cg-2222", cwd="/tmp/projA", slug="b")
+    write_fake_session(fake_status_dir, "cg-3333", cwd="/tmp/projB", slug="c")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=3)
+        app.group_by = "project"
+        await pilot.pause()
+        table = app.query_one(DataTable)
+        await _wait_for_rows(pilot, app, expected=5)  # 2 headers + 3 sessions
+        initial_rows = table.row_count
+        # Move cursor to a session row (row 1 = first session under first group)
+        table.move_cursor(row=1)
+        await pilot.pause()
+        # Press x to collapse the parent group
+        await pilot.press("x")
+        await pilot.pause()
+        # Group should be collapsed, fewer rows now
+        assert table.row_count < initial_rows
+
+
+@pytest.mark.asyncio
+async def test_expand_group_from_session_row(fake_status_dir):
+    """Pressing x on a collapsed group header should expand it."""
+    write_fake_session(fake_status_dir, "eg-1111", cwd="/tmp/projA", slug="a")
+    write_fake_session(fake_status_dir, "eg-2222", cwd="/tmp/projB", slug="b")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=2)
+        app.group_by = "project"
+        await pilot.pause()
+        table = app.query_one(DataTable)
+        await _wait_for_rows(pilot, app, expected=4)  # 2 headers + 2 sessions
+        # Move to first session and collapse
+        table.move_cursor(row=1)
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+        collapsed_rows = table.row_count
+        # Now move to the group header row (row 0) and expand
+        table.move_cursor(row=0)
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+        assert table.row_count > collapsed_rows
+
+
+@pytest.mark.asyncio
+async def test_collapse_noop_without_grouping(fake_status_dir):
+    """Pressing x without group-by active should be a no-op."""
+    write_fake_session(fake_status_dir, "no-1111", slug="a")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=1)
+        table = app.query_one(DataTable)
+        rows_before = table.row_count
+        await pilot.press("x")
+        await pilot.pause()
+        assert table.row_count == rows_before
+
+
+@pytest.mark.asyncio
+async def test_help_overlay_opens_and_closes(fake_status_dir):
+    """Pressing ? should open help overlay, pressing ? again should close it."""
+    write_fake_session(fake_status_dir, "help-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=1)
+        # Open help
+        await pilot.press("question_mark")
+        await pilot.pause()
+        from cctop_dashboard import HelpOverlay
+        assert any(isinstance(s, HelpOverlay) for s in app.screen_stack)
+        # Close help
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert not any(isinstance(s, HelpOverlay) for s in app.screen_stack)
+
+
+@pytest.mark.asyncio
+async def test_help_overlay_closes_on_escape(fake_status_dir):
+    """Pressing escape should close the help overlay."""
+    write_fake_session(fake_status_dir, "help-2222")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=1)
+        await pilot.press("question_mark")
+        await pilot.pause()
+        from cctop_dashboard import HelpOverlay
+        assert any(isinstance(s, HelpOverlay) for s in app.screen_stack)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not any(isinstance(s, HelpOverlay) for s in app.screen_stack)
+
+
+@pytest.mark.asyncio
+async def test_help_overlay_contains_keybindings(fake_status_dir):
+    """Help overlay should display keybinding categories."""
+    write_fake_session(fake_status_dir, "help-3333")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=1)
+        await pilot.press("question_mark")
+        await pilot.pause()
+        from cctop_dashboard import HelpOverlay
+        overlay = None
+        for s in app.screen_stack:
+            if isinstance(s, HelpOverlay):
+                overlay = s
+                break
+        assert overlay is not None
+        content = _render_static_text(overlay.query_one("#help-panel", Static))
+        assert "Navigation" in content
+        assert "Actions" in content
+        assert "Sort" in content
+
+
+@pytest.mark.asyncio
+async def test_footer_bar_shows_keybindings(fake_status_dir):
+    """Custom footer bar should show grouped keybindings."""
+    write_fake_session(fake_status_dir, "fb-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=1)
+        footer = app.query_one("#footer-bar", Static)
+        content = _render_static_text(footer)
+        assert "Quit" in content
+        assert "Sort" in content
+        assert "Help" in content
+
+
+@pytest.mark.asyncio
+async def test_footer_bar_shows_fold_when_grouped(fake_status_dir):
+    """Footer should show 'Fold' key when group-by is active."""
+    write_fake_session(fake_status_dir, "fb-2222", cwd="/tmp/projA")
+    write_fake_session(fake_status_dir, "fb-3333", cwd="/tmp/projB")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=2)
+        footer = app.query_one("#footer-bar", Static)
+        content_before = _render_static_text(footer)
+        assert "Fold" not in content_before
+        # Enable grouping
+        app.group_by = "project"
+        await pilot.pause()
+        content_after = _render_static_text(footer)
+        assert "Fold" in content_after
+
+
 def test_load_sessions_status_context(fake_status_dir):
     """SessionInfo should include status_context from hook JSON."""
     write_fake_session(fake_status_dir, "sc-1111", status_context="src/app.py")
