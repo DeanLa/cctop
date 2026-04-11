@@ -2263,8 +2263,8 @@ async def test_wraparound_navigation_up(fake_status_dir):
 
 
 @pytest.mark.asyncio
-async def test_wraparound_skips_group_headers(fake_status_dir):
-    """Wrap-around should skip group header rows."""
+async def test_wraparound_navigates_group_headers(fake_status_dir):
+    """Wrap-around should land on group headers (they are navigable)."""
     write_fake_session(fake_status_dir, "wg-1111", cwd="/tmp/projA", slug="a")
     write_fake_session(fake_status_dir, "wg-2222", cwd="/tmp/projB", slug="b")
     app = SessionsDashboard()
@@ -2274,19 +2274,12 @@ async def test_wraparound_skips_group_headers(fake_status_dir):
         await pilot.pause()
         await _wait_for_rows(pilot, app, expected=4)  # 2 headers + 2 sessions
         table = app.query_one(DataTable)
-        # Find the last session row (should be row 3: header, session, header, session)
+        # From last row, press down - should wrap to row 0 (group header)
         table.move_cursor(row=table.row_count - 1)
         await pilot.pause()
-        # Press down - should wrap to first session row (row 1, skipping header at 0)
         await pilot.press("down")
         await pilot.pause()
-        row = table.cursor_coordinate.row
-        # Should NOT be on a group header
-        from cctop_dashboard import _GROUP_ROW_PREFIX
-        cell_key = table.coordinate_to_cell_key(
-            table.cursor_coordinate._replace(column=0)
-        )
-        assert not str(cell_key.row_key.value).startswith(_GROUP_ROW_PREFIX)
+        assert table.cursor_coordinate.row == 0
 
 
 @pytest.mark.asyncio
@@ -2407,6 +2400,38 @@ async def test_help_overlay_contains_keybindings(fake_status_dir):
         assert "Navigation" in content
         assert "Actions" in content
         assert "Sort" in content
+
+
+@pytest.mark.asyncio
+async def test_footer_bar_shows_keybindings(fake_status_dir):
+    """Custom footer bar should show grouped keybindings."""
+    write_fake_session(fake_status_dir, "fb-1111")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=1)
+        footer = app.query_one("#footer-bar", Static)
+        content = _render_static_text(footer)
+        assert "Quit" in content
+        assert "Sort" in content
+        assert "Help" in content
+
+
+@pytest.mark.asyncio
+async def test_footer_bar_shows_fold_when_grouped(fake_status_dir):
+    """Footer should show 'Fold' key when group-by is active."""
+    write_fake_session(fake_status_dir, "fb-2222", cwd="/tmp/projA")
+    write_fake_session(fake_status_dir, "fb-3333", cwd="/tmp/projB")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app, expected=2)
+        footer = app.query_one("#footer-bar", Static)
+        content_before = _render_static_text(footer)
+        assert "Fold" not in content_before
+        # Enable grouping
+        app.group_by = "project"
+        await pilot.pause()
+        content_after = _render_static_text(footer)
+        assert "Fold" in content_after
 
 
 def test_load_sessions_status_context(fake_status_dir):
