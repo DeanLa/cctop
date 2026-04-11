@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.5.2 — 2026-04-11
+
+### Keybinding UX Overhaul
+
+- **Help overlay** (`?`): categorized keybinding reference, dismiss with `?`, `esc`, or `q`
+- **Redesigned footer**: grouped key badges with reverse styling, context-sensitive keys (`x Fold` only visible when grouped)
+- **Wrap-around navigation**: `↑`/`↓` wrap from last row to first and vice versa
+- **Theme picker** (`t`): direct access to Textual's built-in theme picker
+
+### Group View Fixes
+
+- **Collapse from any row** (`x`): toggling collapse now works from any session row inside a group, not just the group header
+- **Group headers are navigable**: collapsed groups can be selected and expanded via `Enter` or `x`
+
 ## v0.5.1 — 2026-04-06
 
 ### Bug Fixes
