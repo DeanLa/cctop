@@ -37,6 +37,12 @@ if [ "$EVENT" = "SessionStart" ] && [ -n "$TMUX" ]; then
     TMUX_WINDOW=$(tmux display-message -p '#I' 2>/dev/null || echo "")
 fi
 
+# Detect JetBrains terminal (PyCharm, IntelliJ, etc.) on SessionStart
+JETBRAINS_PROJECT=""
+if [ "$EVENT" = "SessionStart" ] && [ "$TERMINAL_EMULATOR" = "JetBrains-JediTerm" ]; then
+    JETBRAINS_PROJECT="true"
+fi
+
 # Don't trust transcript_path if the file doesn't exist (happens after
 # EnterWorktree — Claude reports a path based on the worktree cwd, but
 # the actual transcript stays at the original project path).
@@ -236,6 +242,7 @@ echo "$EXISTING" | jq \
     --argjson tool_failure_delta "$TOOL_FAILURE_DELTA" \
     --arg status_context "$STATUS_CONTEXT" \
     --argjson clear_context "$CLEAR_CONTEXT" \
+    --arg jetbrains "$JETBRAINS_PROJECT" \
     '{
         session_id: $sid,
         cwd: $cwd,
@@ -251,6 +258,7 @@ echo "$EXISTING" | jq \
         running_agents: (if $agent_reset then 0 else [(.running_agents // 0) + $agent_delta, 0] | max end),
         tmux_session: (if $tmux_session != "" then $tmux_session else (.tmux_session // "") end),
         tmux_window: (if $tmux_window != "" then $tmux_window else (.tmux_window // "") end),
+        jetbrains: (if $jetbrains != "" then true else (.jetbrains // false) end),
         last_tool: $last_tool,
         planning_mode: $planning_mode,
         active_subagent_type: $active_subagent_type,

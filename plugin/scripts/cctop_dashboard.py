@@ -408,6 +408,7 @@ class SessionInfo:
     subagent_cache_creation_tokens: int = 0
     tmux_session: str = ""
     tmux_window: str = ""
+    jetbrains: bool = False
     planning_mode: bool = False
     last_tool: str = ""
     active_subagent_type: str = ""
@@ -723,6 +724,7 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         running_agents=hook.get("running_agents", 0),
         tmux_session=hook.get("tmux_session", ""),
         tmux_window=hook.get("tmux_window", ""),
+        jetbrains=hook.get("jetbrains", False),
         planning_mode=hook.get("planning_mode", False),
         last_tool=hook.get("last_tool", ""),
         active_subagent_type=hook.get("active_subagent_type", ""),
@@ -1139,7 +1141,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Actions", [
         ("k", "Kill session"),
-        ("a", "Tmux attach"),
+        ("a", "Tmux attach / Open in PyCharm"),
         ("R", "Purge dead sessions"),
         ("r", "Force refresh"),
     ]),
@@ -1697,8 +1699,10 @@ class SessionsDashboard(App):
                 session = self._find_session(row_key)
                 if session is None:
                     return None
-                # Show binding only if session has tmux metadata (non-empty string)
-                return True if session.tmux_session != "" else None
+                # Show binding if session has tmux metadata or JetBrains origin
+                if session.tmux_session or session.jetbrains:
+                    return True
+                return None
             except Exception:
                 return None
         return True
@@ -1719,6 +1723,11 @@ class SessionsDashboard(App):
         session = self._find_session(row_key)
         if session is None:
             self.notify("No session selected", severity="warning")
+            return
+
+        # PyCharm path: open the project directory in PyCharm
+        if not session.tmux_session and session.jetbrains and session.cwd:
+            subprocess.Popen(["open", "-a", "PyCharm", session.cwd])
             return
 
         if not session.tmux_session and not session.pid:
@@ -1882,6 +1891,12 @@ class SessionsDashboard(App):
             k = self._fkey
             bar.update(Text.from_markup(
                 f"{k('a')} Attach to tmux session '{session.tmux_session}'"
+            ))
+            bar.add_class("visible")
+        elif session and session.jetbrains and session.cwd:
+            k = self._fkey
+            bar.update(Text.from_markup(
+                f"{k('a')} Open in PyCharm"
             ))
             bar.add_class("visible")
         else:
@@ -2096,6 +2111,8 @@ class SessionsDashboard(App):
             _add("PID", f"[dim]{s.pid}[/dim]")
         if s.tmux_session:
             _add("Tmux", f"[dim]{s.tmux_session}:{s.tmux_window}[/dim]")
+        if s.jetbrains:
+            _add("Terminal", "PyCharm")
 
         # Errors (conditional)
         err_parts: list[str] = []
