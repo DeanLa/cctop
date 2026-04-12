@@ -322,6 +322,20 @@ def format_tokens(total: int) -> str:
     return f"{total // 1000}k"
 
 
+def format_tokens_compact(total: int) -> str:
+    """Format a token count compactly with M support. E.g. '152k', '1.2M'."""
+    if total == 0:
+        return "0"
+    if total < 1000:
+        return str(total)
+    if total < 1_000_000:
+        return f"{total // 1000}k"
+    millions = total / 1_000_000
+    if millions >= 10:
+        return f"{int(millions)}M"
+    return f"{millions:.1f}M"
+
+
 # Pricing per 1M tokens (from Anthropic published rates)
 _PRICING: dict[str, dict[str, float]] = {
     "opus-4-6":   {"input": 5.0,   "output": 25.0,  "cache_write": 6.25,  "cache_read": 0.50},
@@ -1317,6 +1331,12 @@ class SessionsDashboard(App):
     #action-bar.visible {
         display: block;
     }
+    #summary-bar {
+        height: 1;
+        padding: 0 1;
+        background: $surface;
+        color: $text-muted;
+    }
     #footer-bar {
         dock: bottom;
         height: 1;
@@ -1357,6 +1377,7 @@ class SessionsDashboard(App):
                 yield _CctopTable(id="table")
                 yield Static("", id="health-bar")
                 yield Static("", id="action-bar")
+                yield Static("", id="summary-bar")
                 with Horizontal(id="status-bar"):
                     yield Static("", id="status-left")
                     yield Static("", id="status-right")
@@ -1830,6 +1851,7 @@ class SessionsDashboard(App):
         if health is not None:
             self._last_health = health
         self._repopulate_table()
+        self._update_summary_bar(self._sessions)
         self._update_subtitle()
         self._update_health_bar()
         # Refresh detail panels for the currently highlighted session
@@ -1887,6 +1909,36 @@ class SessionsDashboard(App):
         else:
             bar.update("")
             bar.remove_class("visible")
+
+    def _update_summary_bar(self, displayed: list[SessionInfo]) -> None:
+        """Update the summary bar with aggregate metrics across displayed sessions."""
+        total_count = len(self._sessions)
+        shown_count = len(displayed)
+        total_cost = sum(_calc_cost(s) for s in displayed)
+        total_tokens = sum(
+            s.cumulative_input_tokens + s.cumulative_output_tokens
+            for s in displayed
+        )
+        # Count sessions per model (short name)
+        model_counts: dict[str, int] = {}
+        for s in displayed:
+            name = friendly_model_name(s.model) if s.model else "unknown"
+            model_counts[name] = model_counts.get(name, 0) + 1
+
+        parts: list[str] = []
+        if shown_count != total_count:
+            parts.append(f"{shown_count}/{total_count} sessions")
+        else:
+            parts.append(_plural(shown_count, "session"))
+        if total_cost >= 0.005:
+            parts.append(format_cost(total_cost))
+        if total_tokens:
+            parts.append(f"{format_tokens_compact(total_tokens)} tokens")
+        if model_counts:
+            model_parts = [f"{n}: {c}" for n, c in sorted(model_counts.items())]
+            parts.append(", ".join(model_parts))
+
+        self.query_one("#summary-bar", Static).update(" · ".join(parts))
 
     def _update_subtitle(self) -> None:
         """Update the header subtitle with session count, group, and sort info."""
