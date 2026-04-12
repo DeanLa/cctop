@@ -35,7 +35,7 @@ from textual.screen import ModalScreen
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.coordinate import Coordinate
 from textual.geometry import Region
-from textual.widgets import DataTable, Header, OptionList, Static
+from textual.widgets import DataTable, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 # --- Constants ---
@@ -1140,6 +1140,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("View", [
         ("s", "Sort by active column"),
+        ("/", "Filter sessions"),
         ("g", "Group by picker"),
         ("G", "Remove grouping"),
         ("x", "Collapse/expand group"),
@@ -1331,6 +1332,14 @@ class SessionsDashboard(App):
     #action-bar.visible {
         display: block;
     }
+    #filter-bar {
+        height: auto;
+        display: none;
+        padding: 0 1;
+    }
+    #filter-bar.visible {
+        display: block;
+    }
     #summary-bar {
         height: 1;
         padding: 0 1;
@@ -1364,6 +1373,7 @@ class SessionsDashboard(App):
         Binding("V", "expand_activity", "Activity++", show=False),
         Binding("question_mark", "show_help", "Help", show=False),
         Binding("t", "change_theme", "Theme", show=False),
+        Binding("slash", "toggle_filter", "Filter", show=False),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
@@ -1374,6 +1384,7 @@ class SessionsDashboard(App):
         yield Header()
         with Horizontal(id="main-area"):
             with Vertical(id="main-left"):
+                yield Input(placeholder="Filter sessions...", id="filter-bar")
                 yield _CctopTable(id="table")
                 yield Static("", id="health-bar")
                 yield Static("", id="action-bar")
@@ -1424,6 +1435,7 @@ class SessionsDashboard(App):
         self._last_row_keys: list[str] = []
         self._hidden_columns: set[str] = hidden_columns or set()
         self._collapsed_groups: set[str] = set()
+        self._filter_text: str = ""
 
     def _setup_table(self) -> None:
         """Configure the DataTable with columns from COLUMNS definitions."""
@@ -1599,6 +1611,44 @@ class SessionsDashboard(App):
     def action_show_help(self) -> None:
         """Open the keybinding help overlay."""
         self.push_screen(HelpOverlay())
+
+    def action_toggle_filter(self) -> None:
+        """Toggle the filter bar visibility."""
+        bar = self.query_one("#filter-bar", Input)
+        if bar.has_class("visible"):
+            self._dismiss_filter()
+        else:
+            bar.add_class("visible")
+            bar.focus()
+
+    def _dismiss_filter(self) -> None:
+        """Hide the filter bar, clear filter text, and focus the table."""
+        bar = self.query_one("#filter-bar", Input)
+        bar.remove_class("visible")
+        bar.value = ""
+        self._filter_text = ""
+        self.query_one(_CctopTable).focus()
+        self._repopulate_table()
+        self._update_summary_bar(self._sessions)
+        self._update_subtitle()
+        self._update_footer()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Live-filter the table as the user types."""
+        self._filter_text = event.value
+        self._repopulate_table()
+        displayed = self._filtered_sessions()
+        self._update_summary_bar(displayed)
+        self._update_subtitle()
+
+    def on_key(self, event) -> None:
+        """Intercept Escape in the filter bar to dismiss it."""
+        if event.key == "escape":
+            bar = self.query_one("#filter-bar", Input)
+            if bar.has_class("visible"):
+                self._dismiss_filter()
+                event.prevent_default()
+                event.stop()
 
     def action_clear_group_by(self) -> None:
         """Remove grouping and return to flat view."""
@@ -1985,11 +2035,27 @@ class SessionsDashboard(App):
         sort_fn = col_def.sort_key or (lambda s: s.last_activity or "")
         return sorted(self._sessions, key=sort_fn, reverse=self.sort_reverse)
 
+    def _filtered_sessions(self) -> list[SessionInfo]:
+        """Return sorted sessions filtered by current filter text."""
+        ordered = self._sorted_sessions()
+        if not self._filter_text:
+            return ordered
+        needle = self._filter_text.lower()
+        vis = self._visible_columns()
+        result: list[SessionInfo] = []
+        for s in ordered:
+            for c in vis:
+                cell_val = str(c.cell(s)).lower()
+                if needle in cell_val:
+                    result.append(s)
+                    break
+        return result
+
     def _build_table_rows(
         self, vis: tuple[ColumnDef, ...]
     ) -> list[tuple[str, tuple]]:
         """Build (row_key, cells) list, interleaving group headers when grouped."""
-        ordered = self._sorted_sessions()
+        ordered = self._filtered_sessions()
         group_def = GROUP_DEFS.get(self.group_by) if self.group_by else None
         if not group_def:
             return [(s.session_id, _row_cells(s, vis)) for s in ordered]
