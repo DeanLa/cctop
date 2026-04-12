@@ -1419,6 +1419,7 @@ class SessionsDashboard(App):
         self._setup_table()
         self._config_loaded = True
         self._update_footer()
+        self.query_one(_CctopTable).focus()
         self._schedule_refresh()
         self.set_interval(0.5, self._schedule_refresh)
 
@@ -1640,6 +1641,7 @@ class SessionsDashboard(App):
         displayed = self._filtered_sessions()
         self._update_summary_bar(displayed)
         self._update_subtitle()
+        self._update_footer()
 
     def on_key(self, event) -> None:
         """Intercept Escape in the filter bar to dismiss it."""
@@ -1901,7 +1903,7 @@ class SessionsDashboard(App):
         if health is not None:
             self._last_health = health
         self._repopulate_table()
-        self._update_summary_bar(self._sessions)
+        self._update_summary_bar(self._filtered_sessions())
         self._update_subtitle()
         self._update_health_bar()
         # Refresh detail panels for the currently highlighted session
@@ -1935,13 +1937,15 @@ class SessionsDashboard(App):
         parts: list[str] = [
             f"{k('q')} Quit",
             f"{k('\u2191\u2193')} Session  {k('\u2190\u2192')} Col",
-            f"{k('s')} Sort  {k('g')} Group  {k('c')} Cols",
+            f"{k('s')} Sort  {k('/')} Filter  {k('g')} Group  {k('c')} Cols",
         ]
         if self.group_by:
             parts[-1] += f"  {k('x')} Fold"
         parts.append(f"{k('v')} Activity")
         parts.append(f"{k('k')} Kill")
         parts.append(f"{k('?')} Help")
+        if self._filter_text:
+            parts.append(f'{k("/")} "{self._filter_text}"')
         self.query_one("#footer-bar", Static).update(
             Text.from_markup(sep.join(parts))
         )
@@ -1991,7 +1995,7 @@ class SessionsDashboard(App):
         self.query_one("#summary-bar", Static).update(" · ".join(parts))
 
     def _update_subtitle(self) -> None:
-        """Update the header subtitle with session count, group, and sort info."""
+        """Update the header subtitle with session count, group, sort, and filter info."""
         count = len(self._sessions)
         col_def = _COLUMN_BY_KEY.get(self.sort_mode)
         sort_label = col_def.header if col_def else self.sort_mode
@@ -2000,6 +2004,8 @@ class SessionsDashboard(App):
         if group_def:
             parts.append(f"group: {group_def.label}")
         parts.append(f"sort: {sort_label}")
+        if self._filter_text:
+            parts.append(f'filter: "{self._filter_text}"')
         self.sub_title = " · ".join(parts)
 
     def _update_health_bar(self) -> None:
