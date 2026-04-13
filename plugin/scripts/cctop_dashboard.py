@@ -381,16 +381,6 @@ def format_cost(cost: float) -> str:
     return f"${cost:.2f}"
 
 
-def _theme_display_color(theme: str) -> str:
-    """Return a Rich color name for a theme. Uses theme directly if it's a valid color."""
-    from rich.color import Color, ColorParseError
-
-    try:
-        Color.parse(theme)
-        return theme
-    except ColorParseError:
-        return "yellow"
-
 
 # --- Data structures ---
 
@@ -440,7 +430,7 @@ class SessionInfo:
     error_details: str = ""
     tool_failures: int = 0
     effort_level: str = ""
-    session_theme: str = ""
+    session_color: str = ""
     status_context: str = ""
     recent_events: list = field(default_factory=list)
 
@@ -789,7 +779,7 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         subagent_cache_read_tokens=poller.get("subagent_cache_read_tokens", 0),
         subagent_cache_creation_tokens=poller.get("subagent_cache_creation_tokens", 0),
         effort_level=poller.get("effort_level", ""),
-        session_theme=poller.get("session_theme", ""),
+        session_color=poller.get("session_color", ""),
         recent_events=poller.get("recent_events", []),
         # Poller preferred, hook fallback
         tool_count=poller.get("tool_count", 0) or hook.get("tool_count", 0),
@@ -2239,9 +2229,8 @@ class SessionsDashboard(App):
         # Metrics
         if s.effort_level:
             _add("Effort", f"[yellow]{s.effort_level}[/yellow]")
-        if s.session_theme:
-            color = _theme_display_color(s.session_theme)
-            _add("Theme", f"[{color}]{s.session_theme}[/{color}]")
+        if s.session_color:
+            _add("Color", f"[{s.session_color}]{s.session_color}[/{s.session_color}]")
         cost = _calc_cost(s)
         if cost >= 0.005:
             _add("Cost", f"[cyan]{format_cost(cost)}[/cyan]")

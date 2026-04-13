@@ -17,7 +17,7 @@ Poller-owned fields: slug, custom_title, git_branch, project_name, model, last_u
   cumulative_cache_read_tokens, cumulative_cache_creation_tokens,
   subagent_input_tokens, subagent_output_tokens,
   subagent_cache_read_tokens, subagent_cache_creation_tokens,
-  effort_level, session_theme, recent_events
+  effort_level, session_color, recent_events
 """
 
 from __future__ import annotations
@@ -180,7 +180,7 @@ def parse_new_lines(lines: list[str]) -> dict:
             if "<command-name>/color</command-name>" in sys_content:
                 m = re.search(r"<command-args>([\w-]+)</command-args>", sys_content)
                 if m:
-                    updates["session_theme"] = m.group(1)
+                    updates["session_color"] = m.group(1)
             if "<local-command-stdout>" in sys_content and "Set model to" in sys_content:
                 m = re.search(r"Set model to \x1b\[1m(.*?)\x1b\[22m", sys_content)
                 if not m:

@@ -125,7 +125,7 @@ def write_fake_session(tmpdir: Path, sid: str, *,
                        error_details: str = "",
                        tool_failures: int = 0,
                        effort_level: str = "",
-                       session_theme: str = "",
+                       session_color: str = "",
                        tmux_session: str = "",
                        tmux_window: str = "",
                        status_context: str = "",
@@ -177,7 +177,7 @@ def write_fake_session(tmpdir: Path, sid: str, *,
         "files_edited": files_edited,
         "stop_reason": "",
         "effort_level": effort_level,
-        "session_theme": session_theme,
+        "session_color": session_color,
         "recent_events": recent_events or [],
     }
     (tmpdir / f"{sid}.poller.json").write_text(json.dumps(poller))
@@ -1691,8 +1691,8 @@ def test_poller_effort_latest_wins():
 # --- Poller /color extraction tests ---
 
 
-def test_poller_extracts_session_theme():
-    """Poller should extract theme from /color commands in transcript."""
+def test_poller_extracts_session_color():
+    """Poller should extract color from /color commands in transcript."""
     parse_new_lines = _load_poller_module().parse_new_lines
 
     color_line = json.dumps({
@@ -1703,11 +1703,11 @@ def test_poller_extracts_session_theme():
         },
     })
     result = parse_new_lines([color_line])
-    assert result.get("session_theme") == "monokai"
+    assert result.get("session_color") == "monokai"
 
 
-def test_poller_theme_with_hyphen():
-    """Theme names with hyphens (e.g. textual-dark) should be captured."""
+def test_poller_color_with_hyphen():
+    """Color names with hyphens (e.g. bright-red) should be captured."""
     parse_new_lines = _load_poller_module().parse_new_lines
 
     color_line = json.dumps({
@@ -1718,10 +1718,10 @@ def test_poller_theme_with_hyphen():
         },
     })
     result = parse_new_lines([color_line])
-    assert result.get("session_theme") == "solarized-light"
+    assert result.get("session_color") == "solarized-light"
 
 
-def test_poller_theme_latest_wins():
+def test_poller_color_latest_wins():
     """If multiple /color commands, the last one wins."""
     parse_new_lines = _load_poller_module().parse_new_lines
 
@@ -1736,25 +1736,8 @@ def test_poller_theme_latest_wins():
         }),
     ]
     result = parse_new_lines(lines)
-    assert result.get("session_theme") == "dracula"
+    assert result.get("session_color") == "dracula"
 
-
-def test_theme_display_color_valid():
-    """Valid color names should be used directly."""
-    from cctop_dashboard import _theme_display_color
-
-    assert _theme_display_color("red") == "red"
-    assert _theme_display_color("green") == "green"
-    assert _theme_display_color("cyan") == "cyan"
-
-
-def test_theme_display_color_fallback():
-    """Non-color theme names should fall back to yellow."""
-    from cctop_dashboard import _theme_display_color
-
-    assert _theme_display_color("monokai") == "yellow"
-    assert _theme_display_color("dracula") == "yellow"
-    assert _theme_display_color("solarized-light") == "yellow"
 
 
 def test_poller_extracts_model_from_slash_command():
@@ -1803,15 +1786,15 @@ async def test_effort_column_renders(fake_status_dir):
 
 
 @pytest.mark.asyncio
-async def test_theme_in_detail_panel(fake_status_dir):
-    """Theme should appear in the detail panel when set."""
-    write_fake_session(fake_status_dir, "theme-1111", session_theme="monokai")
+async def test_color_in_detail_panel(fake_status_dir):
+    """Color should appear in the detail panel when set."""
+    write_fake_session(fake_status_dir, "color-1111", session_color="red")
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app)
         info = app.query_one("#detail-info", Static)
         rendered = _render_static_text(info)
-        assert "monokai" in rendered
+        assert "red" in rendered
 
 
 @pytest.mark.asyncio
