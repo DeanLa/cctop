@@ -381,6 +381,17 @@ def format_cost(cost: float) -> str:
     return f"${cost:.2f}"
 
 
+def _theme_display_color(theme: str) -> str:
+    """Return a Rich color name for a theme. Uses theme directly if it's a valid color."""
+    from rich.color import Color, ColorParseError
+
+    try:
+        Color.parse(theme)
+        return theme
+    except ColorParseError:
+        return "yellow"
+
+
 # --- Data structures ---
 
 
@@ -2229,7 +2240,8 @@ class SessionsDashboard(App):
         if s.effort_level:
             _add("Effort", f"[yellow]{s.effort_level}[/yellow]")
         if s.session_theme:
-            _add("Theme", f"[yellow]{s.session_theme}[/yellow]")
+            color = _theme_display_color(s.session_theme)
+            _add("Theme", f"[{color}]{s.session_theme}[/{color}]")
         cost = _calc_cost(s)
         if cost >= 0.005:
             _add("Cost", f"[cyan]{format_cost(cost)}[/cyan]")

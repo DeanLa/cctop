@@ -1739,6 +1739,24 @@ def test_poller_theme_latest_wins():
     assert result.get("session_theme") == "dracula"
 
 
+def test_theme_display_color_valid():
+    """Valid color names should be used directly."""
+    from cctop_dashboard import _theme_display_color
+
+    assert _theme_display_color("red") == "red"
+    assert _theme_display_color("green") == "green"
+    assert _theme_display_color("cyan") == "cyan"
+
+
+def test_theme_display_color_fallback():
+    """Non-color theme names should fall back to yellow."""
+    from cctop_dashboard import _theme_display_color
+
+    assert _theme_display_color("monokai") == "yellow"
+    assert _theme_display_color("dracula") == "yellow"
+    assert _theme_display_color("solarized-light") == "yellow"
+
+
 def test_poller_extracts_model_from_slash_command():
     """Poller should extract model from /model command output in transcript."""
     parse_new_lines = _load_poller_module().parse_new_lines
