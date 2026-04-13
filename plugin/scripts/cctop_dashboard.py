@@ -496,6 +496,7 @@ class ColumnDef:
         None  # extracts comparable value for sorting
     )
     reverse_sort: bool = False  # True = largest/newest first
+    filterable: bool = False  # True = included in text filter matching
 
     def __post_init__(self) -> None:
         if not self.header:
@@ -512,6 +513,7 @@ COLUMNS: tuple[ColumnDef, ...] = (
             else Text.assemble(("○ ", "dim"), s.session_id[:8])
         ),
         sort_key=lambda s: (s.custom_title or s.slug or s.session_id).lower(),
+        filterable=True,
     ),
     ColumnDef(
         "project",
@@ -519,21 +521,25 @@ COLUMNS: tuple[ColumnDef, ...] = (
         sort_key=lambda s: (
             s.project_name or os.path.basename(s.cwd) if s.cwd else ""
         ).lower(),
+        filterable=True,
     ),
     ColumnDef(
         "branch",
         cell=lambda s: s.git_branch[:20],
         sort_key=lambda s: s.git_branch.lower(),
+        filterable=True,
     ),
     ColumnDef(
         "status",
         cell=lambda s: styled_status(s),
         sort_key=lambda s: s.status.lower(),
+        filterable=True,
     ),
     ColumnDef(
         "model",
         cell=lambda s: friendly_model_name(s.model),
         sort_key=lambda s: s.model.lower(),
+        filterable=True,
     ),
     ColumnDef(
         "ctx_pct",
@@ -584,6 +590,7 @@ COLUMNS: tuple[ColumnDef, ...] = (
         "effort",
         cell=lambda s: s.effort_level or "",
         sort_key=lambda s: s.effort_level.lower(),
+        filterable=True,
     ),
     ColumnDef(
         "cost",
@@ -2042,15 +2049,20 @@ class SessionsDashboard(App):
         return sorted(self._sessions, key=sort_fn, reverse=self.sort_reverse)
 
     def _filtered_sessions(self) -> list[SessionInfo]:
-        """Return sorted sessions filtered by current filter text."""
+        """Return sorted sessions filtered by current filter text.
+
+        Only matches against columns marked filterable=True (text columns
+        like name, project, branch, status, model). Numeric and time
+        columns are excluded.
+        """
         ordered = self._sorted_sessions()
         if not self._filter_text:
             return ordered
         needle = self._filter_text.lower()
-        vis = self._visible_columns()
+        filterable = [c for c in COLUMNS if c.filterable]
         result: list[SessionInfo] = []
         for s in ordered:
-            for c in vis:
+            for c in filterable:
                 cell_val = str(c.cell(s)).lower()
                 if needle in cell_val:
                     result.append(s)
