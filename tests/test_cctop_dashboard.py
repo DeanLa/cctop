@@ -125,6 +125,7 @@ def write_fake_session(tmpdir: Path, sid: str, *,
                        error_details: str = "",
                        tool_failures: int = 0,
                        effort_level: str = "",
+                       session_theme: str = "",
                        tmux_session: str = "",
                        tmux_window: str = "",
                        status_context: str = "",
@@ -176,6 +177,7 @@ def write_fake_session(tmpdir: Path, sid: str, *,
         "files_edited": files_edited,
         "stop_reason": "",
         "effort_level": effort_level,
+        "session_theme": session_theme,
         "recent_events": recent_events or [],
     }
     (tmpdir / f"{sid}.poller.json").write_text(json.dumps(poller))
@@ -1686,6 +1688,57 @@ def test_poller_effort_latest_wins():
     assert result.get("effort_level") == "high"
 
 
+# --- Poller /color extraction tests ---
+
+
+def test_poller_extracts_session_theme():
+    """Poller should extract theme from /color commands in transcript."""
+    parse_new_lines = _load_poller_module().parse_new_lines
+
+    color_line = json.dumps({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": "<command-name>/color</command-name>\n<command-message>color</command-message>\n<command-args>monokai</command-args>",
+        },
+    })
+    result = parse_new_lines([color_line])
+    assert result.get("session_theme") == "monokai"
+
+
+def test_poller_theme_with_hyphen():
+    """Theme names with hyphens (e.g. textual-dark) should be captured."""
+    parse_new_lines = _load_poller_module().parse_new_lines
+
+    color_line = json.dumps({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": "<command-name>/color</command-name>\n<command-message>color</command-message>\n<command-args>solarized-light</command-args>",
+        },
+    })
+    result = parse_new_lines([color_line])
+    assert result.get("session_theme") == "solarized-light"
+
+
+def test_poller_theme_latest_wins():
+    """If multiple /color commands, the last one wins."""
+    parse_new_lines = _load_poller_module().parse_new_lines
+
+    lines = [
+        json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": "<command-name>/color</command-name>\n<command-message>color</command-message>\n<command-args>monokai</command-args>"},
+        }),
+        json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": "<command-name>/color</command-name>\n<command-message>color</command-message>\n<command-args>dracula</command-args>"},
+        }),
+    ]
+    result = parse_new_lines(lines)
+    assert result.get("session_theme") == "dracula"
+
+
 def test_poller_extracts_model_from_slash_command():
     """Poller should extract model from /model command output in transcript."""
     parse_new_lines = _load_poller_module().parse_new_lines
@@ -1729,6 +1782,18 @@ async def test_effort_column_renders(fake_status_dir):
         info = app.query_one("#detail-info", Static)
         rendered = _render_static_text(info)
         assert "high" in rendered
+
+
+@pytest.mark.asyncio
+async def test_theme_in_detail_panel(fake_status_dir):
+    """Theme should appear in the detail panel when set."""
+    write_fake_session(fake_status_dir, "theme-1111", session_theme="monokai")
+    app = SessionsDashboard()
+    async with app.run_test() as pilot:
+        await _wait_for_rows(pilot, app)
+        info = app.query_one("#detail-info", Static)
+        rendered = _render_static_text(info)
+        assert "monokai" in rendered
 
 
 @pytest.mark.asyncio

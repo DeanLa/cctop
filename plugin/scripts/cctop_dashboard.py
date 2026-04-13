@@ -429,6 +429,7 @@ class SessionInfo:
     error_details: str = ""
     tool_failures: int = 0
     effort_level: str = ""
+    session_theme: str = ""
     status_context: str = ""
     recent_events: list = field(default_factory=list)
 
@@ -777,6 +778,7 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         subagent_cache_read_tokens=poller.get("subagent_cache_read_tokens", 0),
         subagent_cache_creation_tokens=poller.get("subagent_cache_creation_tokens", 0),
         effort_level=poller.get("effort_level", ""),
+        session_theme=poller.get("session_theme", ""),
         recent_events=poller.get("recent_events", []),
         # Poller preferred, hook fallback
         tool_count=poller.get("tool_count", 0) or hook.get("tool_count", 0),
@@ -2226,6 +2228,8 @@ class SessionsDashboard(App):
         # Metrics
         if s.effort_level:
             _add("Effort", f"[yellow]{s.effort_level}[/yellow]")
+        if s.session_theme:
+            _add("Theme", f"[yellow]{s.session_theme}[/yellow]")
         cost = _calc_cost(s)
         if cost >= 0.005:
             _add("Cost", f"[cyan]{format_cost(cost)}[/cyan]")
