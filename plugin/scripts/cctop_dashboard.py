@@ -35,7 +35,7 @@ from textual.screen import ModalScreen
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.coordinate import Coordinate
 from textual.geometry import Region
-from textual.widgets import DataTable, Header, OptionList, Static
+from textual.widgets import DataTable, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 # --- Constants ---
@@ -322,6 +322,20 @@ def format_tokens(total: int) -> str:
     return f"{total // 1000}k"
 
 
+def format_tokens_compact(total: int) -> str:
+    """Format a token count compactly with M support. E.g. '152k', '1.2M'."""
+    if total == 0:
+        return "0"
+    if total < 1000:
+        return str(total)
+    if total < 1_000_000:
+        return f"{total // 1000}k"
+    millions = total / 1_000_000
+    if millions >= 10:
+        return f"{int(millions)}M"
+    return f"{millions:.1f}M"
+
+
 # Pricing per 1M tokens (from Anthropic published rates)
 _PRICING: dict[str, dict[str, float]] = {
     "opus-4-6":   {"input": 5.0,   "output": 25.0,  "cache_write": 6.25,  "cache_read": 0.50},
@@ -482,6 +496,7 @@ class ColumnDef:
         None  # extracts comparable value for sorting
     )
     reverse_sort: bool = False  # True = largest/newest first
+    filterable: bool = False  # True = included in text filter matching
 
     def __post_init__(self) -> None:
         if not self.header:
@@ -498,6 +513,7 @@ COLUMNS: tuple[ColumnDef, ...] = (
             else Text.assemble(("○ ", "dim"), s.session_id[:8])
         ),
         sort_key=lambda s: (s.custom_title or s.slug or s.session_id).lower(),
+        filterable=True,
     ),
     ColumnDef(
         "project",
@@ -505,21 +521,25 @@ COLUMNS: tuple[ColumnDef, ...] = (
         sort_key=lambda s: (
             s.project_name or os.path.basename(s.cwd) if s.cwd else ""
         ).lower(),
+        filterable=True,
     ),
     ColumnDef(
         "branch",
         cell=lambda s: s.git_branch[:20],
         sort_key=lambda s: s.git_branch.lower(),
+        filterable=True,
     ),
     ColumnDef(
         "status",
         cell=lambda s: styled_status(s),
         sort_key=lambda s: s.status.lower(),
+        filterable=True,
     ),
     ColumnDef(
         "model",
         cell=lambda s: friendly_model_name(s.model),
         sort_key=lambda s: s.model.lower(),
+        filterable=True,
     ),
     ColumnDef(
         "ctx_pct",
@@ -570,6 +590,7 @@ COLUMNS: tuple[ColumnDef, ...] = (
         "effort",
         cell=lambda s: s.effort_level or "",
         sort_key=lambda s: s.effort_level.lower(),
+        filterable=True,
     ),
     ColumnDef(
         "cost",
@@ -1126,6 +1147,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("View", [
         ("s", "Sort by active column"),
+        ("/", "Filter sessions"),
         ("g", "Group by picker"),
         ("G", "Remove grouping"),
         ("x", "Collapse/expand group"),
@@ -1267,7 +1289,7 @@ class SessionsDashboard(App):
     }
     #status-bar {
         height: 1;
-        background: $surface;
+        background: $surface-lighten-1;
     }
     #status-left, #status-right {
         width: 1fr;
@@ -1317,6 +1339,19 @@ class SessionsDashboard(App):
     #action-bar.visible {
         display: block;
     }
+    #filter-bar {
+        height: auto;
+        display: none;
+        padding: 0 1;
+    }
+    #filter-bar.visible {
+        display: block;
+    }
+    #summary-bar {
+        height: 1;
+        padding: 0 1;
+        color: $text-muted;
+    }
     #footer-bar {
         dock: bottom;
         height: 1;
@@ -1344,6 +1379,7 @@ class SessionsDashboard(App):
         Binding("V", "expand_activity", "Activity++", show=False),
         Binding("question_mark", "show_help", "Help", show=False),
         Binding("t", "change_theme", "Theme", show=False),
+        Binding("slash", "toggle_filter", "Filter", show=False),
     ]
 
     sort_mode: reactive[str] = reactive("activity", init=False)
@@ -1354,9 +1390,11 @@ class SessionsDashboard(App):
         yield Header()
         with Horizontal(id="main-area"):
             with Vertical(id="main-left"):
+                yield Input(placeholder="Filter sessions...", id="filter-bar")
                 yield _CctopTable(id="table")
                 yield Static("", id="health-bar")
                 yield Static("", id="action-bar")
+                yield Static("", id="summary-bar")
                 with Horizontal(id="status-bar"):
                     yield Static("", id="status-left")
                     yield Static("", id="status-right")
@@ -1387,6 +1425,7 @@ class SessionsDashboard(App):
         self._setup_table()
         self._config_loaded = True
         self._update_footer()
+        self.query_one(_CctopTable).focus()
         self._schedule_refresh()
         self.set_interval(0.5, self._schedule_refresh)
 
@@ -1403,6 +1442,7 @@ class SessionsDashboard(App):
         self._last_row_keys: list[str] = []
         self._hidden_columns: set[str] = hidden_columns or set()
         self._collapsed_groups: set[str] = set()
+        self._filter_text: str = ""
 
     def _setup_table(self) -> None:
         """Configure the DataTable with columns from COLUMNS definitions."""
@@ -1578,6 +1618,45 @@ class SessionsDashboard(App):
     def action_show_help(self) -> None:
         """Open the keybinding help overlay."""
         self.push_screen(HelpOverlay())
+
+    def action_toggle_filter(self) -> None:
+        """Toggle the filter bar visibility."""
+        bar = self.query_one("#filter-bar", Input)
+        if bar.has_class("visible"):
+            self._dismiss_filter()
+        else:
+            bar.add_class("visible")
+            bar.focus()
+
+    def _dismiss_filter(self) -> None:
+        """Hide the filter bar, clear filter text, and focus the table."""
+        bar = self.query_one("#filter-bar", Input)
+        bar.remove_class("visible")
+        bar.value = ""
+        self._filter_text = ""
+        self.query_one(_CctopTable).focus()
+        self._repopulate_table()
+        self._update_summary_bar(self._sessions)
+        self._update_subtitle()
+        self._update_footer()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Live-filter the table as the user types."""
+        self._filter_text = event.value
+        self._repopulate_table()
+        displayed = self._filtered_sessions()
+        self._update_summary_bar(displayed)
+        self._update_subtitle()
+        self._update_footer()
+
+    def on_key(self, event) -> None:
+        """Intercept Escape in the filter bar to dismiss it."""
+        if event.key == "escape":
+            bar = self.query_one("#filter-bar", Input)
+            if bar.has_class("visible"):
+                self._dismiss_filter()
+                event.prevent_default()
+                event.stop()
 
     def action_clear_group_by(self) -> None:
         """Remove grouping and return to flat view."""
@@ -1830,6 +1909,7 @@ class SessionsDashboard(App):
         if health is not None:
             self._last_health = health
         self._repopulate_table()
+        self._update_summary_bar(self._filtered_sessions())
         self._update_subtitle()
         self._update_health_bar()
         # Refresh detail panels for the currently highlighted session
@@ -1863,13 +1943,15 @@ class SessionsDashboard(App):
         parts: list[str] = [
             f"{k('q')} Quit",
             f"{k('\u2191\u2193')} Session  {k('\u2190\u2192')} Col",
-            f"{k('s')} Sort  {k('g')} Group  {k('c')} Cols",
+            f"{k('s')} Sort  {k('/')} Filter  {k('g')} Group  {k('c')} Cols",
         ]
         if self.group_by:
             parts[-1] += f"  {k('x')} Fold"
         parts.append(f"{k('v')} Activity")
         parts.append(f"{k('k')} Kill")
         parts.append(f"{k('?')} Help")
+        if self._filter_text:
+            parts.append(f'{k("/")} "{self._filter_text}"')
         self.query_one("#footer-bar", Static).update(
             Text.from_markup(sep.join(parts))
         )
@@ -1888,8 +1970,42 @@ class SessionsDashboard(App):
             bar.update("")
             bar.remove_class("visible")
 
+    def _update_summary_bar(self, displayed: list[SessionInfo]) -> None:
+        """Update the summary bar with aggregate metrics across displayed sessions."""
+        total_count = len(self._sessions)
+        shown_count = len(displayed)
+        total_cost = sum(_calc_cost(s) for s in displayed)
+        total_tokens = sum(
+            s.cumulative_input_tokens + s.cumulative_output_tokens
+            for s in displayed
+        )
+        # Count sessions per model (short name)
+        model_counts: dict[str, int] = {}
+        for s in displayed:
+            name = friendly_model_name(s.model) if s.model else "unknown"
+            model_counts[name] = model_counts.get(name, 0) + 1
+
+        parts: list[str] = []
+        if self._filter_text:
+            parts.append(f"[cyan]{self._filter_text}[/cyan]")
+        if shown_count != total_count:
+            parts.append(f"{shown_count}/{total_count} sessions")
+        else:
+            parts.append(_plural(shown_count, "session"))
+        if total_cost >= 0.005:
+            parts.append(format_cost(total_cost))
+        if total_tokens:
+            parts.append(f"{format_tokens_compact(total_tokens)} tokens")
+        if model_counts:
+            model_parts = [f"{n}: {c}" for n, c in sorted(model_counts.items())]
+            parts.append(", ".join(model_parts))
+
+        self.query_one("#summary-bar", Static).update(
+            Text.from_markup(" · ".join(parts))
+        )
+
     def _update_subtitle(self) -> None:
-        """Update the header subtitle with session count, group, and sort info."""
+        """Update the header subtitle with session count, group, sort, and filter info."""
         count = len(self._sessions)
         col_def = _COLUMN_BY_KEY.get(self.sort_mode)
         sort_label = col_def.header if col_def else self.sort_mode
@@ -1898,6 +2014,8 @@ class SessionsDashboard(App):
         if group_def:
             parts.append(f"group: {group_def.label}")
         parts.append(f"sort: {sort_label}")
+        if self._filter_text:
+            parts.append(f'filter: "{self._filter_text}"')
         self.sub_title = " · ".join(parts)
 
     def _update_health_bar(self) -> None:
@@ -1933,11 +2051,32 @@ class SessionsDashboard(App):
         sort_fn = col_def.sort_key or (lambda s: s.last_activity or "")
         return sorted(self._sessions, key=sort_fn, reverse=self.sort_reverse)
 
+    def _filtered_sessions(self) -> list[SessionInfo]:
+        """Return sorted sessions filtered by current filter text.
+
+        Only matches against columns marked filterable=True (text columns
+        like name, project, branch, status, model). Numeric and time
+        columns are excluded.
+        """
+        ordered = self._sorted_sessions()
+        if not self._filter_text:
+            return ordered
+        needle = self._filter_text.lower()
+        filterable = [c for c in COLUMNS if c.filterable]
+        result: list[SessionInfo] = []
+        for s in ordered:
+            for c in filterable:
+                cell_val = str(c.cell(s)).lower()
+                if needle in cell_val:
+                    result.append(s)
+                    break
+        return result
+
     def _build_table_rows(
         self, vis: tuple[ColumnDef, ...]
     ) -> list[tuple[str, tuple]]:
         """Build (row_key, cells) list, interleaving group headers when grouped."""
-        ordered = self._sorted_sessions()
+        ordered = self._filtered_sessions()
         group_def = GROUP_DEFS.get(self.group_by) if self.group_by else None
         if not group_def:
             return [(s.session_id, _row_cells(s, vis)) for s in ordered]
