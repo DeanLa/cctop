@@ -3,9 +3,6 @@
 Items tagged with `PR-X` are assigned to a PR group, see [plans/pr-groups.md](plans/pr-groups.md) for details.
 When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
-## Manual
-- in activity, mcp can look nicer, more like toole so for example it can be instead of mcp__atlassian_jira_get_issue it can be something like cyan(jira_get_issue) grey(mcp:atlassian)"
-- 
 ## Table & Columns
 - [ ] **84.** Improve column width allocation: current widths feel off, needs investigation into better sizing strategy (auto-fit content, proportional, min/max constraints, or user-resizable) `PR-S`
 
@@ -25,16 +22,13 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
 ## UI & Theming
 - [ ] **42.** Configurable column display order: allow users to reorder columns via config (depends on #36)
-- [ ] **74.** Keyboard shortcuts help: press `?` to open an overlay listing all available keybindings with descriptions `PR-T`
 - [ ] **75.** Totals/summary bar: show aggregate metrics across all visible sessions (total cost, total tokens, session count) with breakdowns by model and project `PR-V`
 - [ ] **76.** Live session filter: as-you-type text filtering across all visible columns (like ng-filter), press `/` to open a filter bar that narrows the table in real time `PR-V`
-- [ ] **83.** Footer keybinding bar overhaul: redesign the bottom bar with better grouping/layout, pair with the `?` help overlay (#74) for a unified keybinding UX `PR-T`
 - [ ] **81.** Move "Purge dead" action out of the footer bar: hide the `R` keybinding from the footer and surface the purge option only in the health warning bar when stale/dead sessions are detected `PR-V`
-- [ ] **85.** Wrap-around row selection: navigating past the last row jumps to the first, and vice versa (pacman loop) `PR-T`
-- [ ] **87.** Collapse/expand group from any row: when group-by is active, a keybinding (e.g. `x`) on any session row should collapse its parent group. Press again to expand. No need to navigate to the group header row. `PR-T`
 - [ ] **92.** Color refactor: route all hardcoded Rich markup colors (yellow for counts, cyan for info, green for times) through `_rich_color` or a similar centralized palette, so UI colors are consistent and configurable in one place (relates to #86)
 
 ## Activity & Status Detection
+- [ ] **93.** Improve MCP tool display in activity feed: instead of raw `mcp__server_tool_name`, show a friendlier format - tool name highlighted with the MCP server as a dimmed prefix (e.g. `jira_get_issue` in cyan, `mcp:atlassian` in grey)
 - [ ] **53.** Classify Bash commands into sub-statuses by inspecting the command string: `testing` (pytest, jest, npm test, go test, cargo test, make test), `building` (npm build, tsc, webpack, cargo build, make, go build), `installing` (pip install, npm install, brew install, cargo add), `linting` (eslint, ruff, black, prettier, mypy), `git op` (git commit/push/pull/rebase/merge), `creating PR` (gh pr create/merge) `PR-Q`
 - [ ] **58.** Detect repeated test→edit cycles and show `debugging` status (e.g. if the last N tool calls alternate between Bash-test and Edit, the session is likely in a fix loop) `PR-Q`
 - [ ] **59.** Show `deploying` status for infrastructure commands (docker, kubectl, terraform, aws, gcloud) `PR-Q`
@@ -115,3 +109,7 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [x] **78.** Bug: CwdChanged hook overwrites transcript_path and breaks branch/worktree detection on resume — [#32](https://github.com/DeanLa/cctop/pull/32)
 - [x] **80.** Bug: context usage column always shows /200k denominator, now model-aware (1M for extended context) — [#32](https://github.com/DeanLa/cctop/pull/32)
 - [x] **82.** Bug: AskUserQuestion triggers `awaiting permission` instead of distinct `awaiting input` status — [#32](https://github.com/DeanLa/cctop/pull/32)
+- [x] **74.** Keyboard shortcuts help: press `?` to open an overlay listing all available keybindings with descriptions `PR-T` — [#33](https://github.com/DeanLa/cctop/pull/33)
+- [x] **83.** Footer keybinding bar overhaul: redesign the bottom bar with better grouping/layout, pair with the `?` help overlay (#74) for a unified keybinding UX `PR-T` — [#33](https://github.com/DeanLa/cctop/pull/33)
+- [x] **85.** Wrap-around row selection: navigating past the last row jumps to the first, and vice versa (pacman loop) `PR-T` — [#33](https://github.com/DeanLa/cctop/pull/33)
+- [x] **87.** Collapse/expand group from any row: when group-by is active, a keybinding (e.g. `x`) on any session row should collapse its parent group. Press again to expand. No need to navigate to the group header row. `PR-T` — [#33](https://github.com/DeanLa/cctop/pull/33)
