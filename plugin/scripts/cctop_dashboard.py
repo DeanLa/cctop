@@ -382,6 +382,26 @@ def format_cost(cost: float) -> str:
 
 
 
+# Map /color names to Tailwind 400 hex values for consistent rendering
+_COLOR_TO_RICH: dict[str, str] = {
+    "red": "#F87171",
+    "blue": "#60A5FA",
+    "green": "#4ADE80",
+    "yellow": "#FACC15",
+    "purple": "#C084FC",
+    "orange": "#FB923C",
+    "pink": "#F472B6",
+    "cyan": "#22D3EE",
+    "default": "white",
+}
+
+
+def _rich_color(color: str | None = None) -> str:
+    """Map a /color value to a valid Rich color name."""
+    default_color = _COLOR_TO_RICH["default"]
+    return _COLOR_TO_RICH.get(color, default_color)
+
+
 # --- Data structures ---
 
 
@@ -510,9 +530,15 @@ COLUMNS: tuple[ColumnDef, ...] = (
         "slug",
         header="Name",
         cell=lambda s: (
-            Text.assemble(("● ", "#e0af68"), s.custom_title)
+            Text.assemble(
+                ("● ", _rich_color(s.session_color)),
+                s.custom_title,
+            )
             if s.custom_title
-            else Text.assemble(("○ ", "dim"), s.session_id[:8])
+            else Text.assemble(
+                ("○ ", _rich_color(s.session_color)),
+                s.session_id[:8],
+            )
         ),
         sort_key=lambda s: (s.custom_title or s.slug or s.session_id).lower(),
         filterable=True,
@@ -2230,7 +2256,8 @@ class SessionsDashboard(App):
         if s.effort_level:
             _add("Effort", f"[yellow]{s.effort_level}[/yellow]")
         if s.session_color:
-            _add("Color", f"[{s.session_color}]{s.session_color}[/{s.session_color}]")
+            rc = _rich_color(s.session_color)
+            _add("Color", f"[{rc}]{s.session_color}[/{rc}]")
         cost = _calc_cost(s)
         if cost >= 0.005:
             _add("Cost", f"[cyan]{format_cost(cost)}[/cyan]")
