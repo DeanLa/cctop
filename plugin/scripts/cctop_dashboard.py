@@ -927,7 +927,7 @@ def _get_pid_cwd(pid: int) -> str:
     """Get the working directory of a process via lsof."""
     try:
         result = subprocess.run(
-            ["lsof", "-p", str(pid), "-d", "cwd", "-Fn"],
+            ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
             capture_output=True, text=True, timeout=5,
         )
         for line in result.stdout.splitlines():
