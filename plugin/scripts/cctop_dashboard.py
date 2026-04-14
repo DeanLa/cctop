@@ -1289,7 +1289,7 @@ class SessionsDashboard(App):
     }
     #status-bar {
         height: 1;
-        background: $surface;
+        background: $surface-lighten-1;
     }
     #status-left, #status-right {
         width: 1fr;
@@ -1350,7 +1350,6 @@ class SessionsDashboard(App):
     #summary-bar {
         height: 1;
         padding: 0 1;
-        background: $surface;
         color: $text-muted;
     }
     #footer-bar {
@@ -1987,6 +1986,8 @@ class SessionsDashboard(App):
             model_counts[name] = model_counts.get(name, 0) + 1
 
         parts: list[str] = []
+        if self._filter_text:
+            parts.append(f"[cyan]{self._filter_text}[/cyan]")
         if shown_count != total_count:
             parts.append(f"{shown_count}/{total_count} sessions")
         else:
@@ -1999,7 +2000,9 @@ class SessionsDashboard(App):
             model_parts = [f"{n}: {c}" for n, c in sorted(model_counts.items())]
             parts.append(", ".join(model_parts))
 
-        self.query_one("#summary-bar", Static).update(" · ".join(parts))
+        self.query_one("#summary-bar", Static).update(
+            Text.from_markup(" · ".join(parts))
+        )
 
     def _update_subtitle(self) -> None:
         """Update the header subtitle with session count, group, sort, and filter info."""
