@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.6.0 - 2026-04-14
+
+### Summary Bar & Live Filter
+
+- **Summary bar**: always-visible bar showing aggregate metrics across all sessions - total count, cost, tokens, and model breakdown
+- **Live filter** (`/`): as-you-type filtering across all text columns (name, project, branch, status, model, effort). Summary bar updates to reflect filtered results. Escape to clear
+
+### Session Color Tracking
+
+- **Per-session color**: picks up `/color` commands from transcripts and displays the color label in the detail panel, rendered in the actual color
+- **Color indicators**: the Name column dot uses each session's color instead of a uniform white
+
+### Untracked Session Inspector
+
+- **Details modal** (`D`): when untracked Claude processes are detected, press D to see full details - PID, working directory, parent terminal, args, start time, uptime, version, and child processes
+- **Smarter health bar**: "R Purge" now only appears for stale sessions, "D Details" only for untracked ones (previously both showed "R Purge")
+
+### Three-Way Status Grouping
+
+- **Status groups**: group-by now splits sessions into Waiting / Working / Stale instead of the old binary Active / Stale. Each status in the style map declares its own category
+- **Auto-migration**: existing users with `group.by = "stale"` in config are automatically migrated to the new `"status"` key
+
+### Housekeeping
+
+- Improved install script with better flag parsing and usage instructions
+
 ## v0.5.2 — 2026-04-11
 
 ### Keybinding UX Overhaul
