@@ -878,6 +878,13 @@ _PS_EXCLUDE_PATTERNS = (
     "grep",
 )
 
+# Basenames (lowercase) of known terminal/editor apps for parent-process detection
+_KNOWN_TERMINAL_APPS: set[str] = {
+    "iterm2", "terminal", "tmux", "code", "cursor", "pycharm",
+    "warp", "alacritty", "ghostty", "wezterm", "wezterm-gui",
+    "kitty", "screen", "hyper", "tabby",
+}
+
 
 @dataclass
 class HealthStatus:
@@ -886,24 +893,42 @@ class HealthStatus:
     tracked_count: int = 0
     process_count: int = 0
     stale_ids: list[str] = field(default_factory=list)
-    untracked_count: int = 0
+    untracked_pids: set[int] = field(default_factory=set)
+
+    @property
+    def untracked_count(self) -> int:
+        return len(self.untracked_pids)
 
     @property
     def has_mismatch(self) -> bool:
-        return bool(self.stale_ids) or self.untracked_count > 0
+        return bool(self.stale_ids) or bool(self.untracked_pids)
 
     @property
     def message(self) -> str:
         parts: list[str] = []
         if self.stale_ids:
             n = len(self.stale_ids)
-            parts.append(f"{_plural(n, 'stale session')} detected, press R to purge")
-        if self.untracked_count > 0:
+            parts.append(f"{_plural(n, 'stale session')} detected")
+        if self.untracked_pids:
             parts.append(
-                f"{_plural(self.untracked_count, 'session')} not tracked, "
-                "if they started before cctop was installed, this is expected"
+                f"{_plural(self.untracked_count, 'session')} not tracked"
             )
-        return "\n".join(parts)
+        return " · ".join(parts)
+
+
+@dataclass
+class UntrackedProcessInfo:
+    """Details about an untracked Claude CLI process."""
+
+    pid: int
+    cwd: str = ""
+    parent_app: str = ""
+    args: str = ""
+    started: str = ""
+    uptime: str = ""
+    version: str = ""
+    tty: str = ""
+    children: list[str] = field(default_factory=list)
 
 
 def _run_ps() -> str | None:
@@ -954,6 +979,135 @@ def get_claude_pids() -> set[int]:
     return pids
 
 
+def _get_pid_cwd(pid: int) -> str:
+    """Get the working directory of a process via lsof."""
+    try:
+        result = subprocess.run(
+            ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            if line.startswith("n/"):
+                return line[1:]
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+def _get_pid_parent_app(pid: int) -> str:
+    """Walk the process tree upward to find a recognizable terminal/app name."""
+    visited: set[int] = set()
+    current = pid
+    while current > 1 and current not in visited:
+        visited.add(current)
+        try:
+            result = subprocess.run(
+                ["ps", "-o", "ppid=,comm=", "-p", str(current)],
+                capture_output=True, text=True, timeout=3,
+            )
+            line = result.stdout.strip()
+            if not line:
+                break
+            parts = line.split(None, 1)
+            if len(parts) < 2:
+                break
+            ppid, comm = int(parts[0]), parts[1].strip()
+            basename = os.path.basename(comm).lower()
+            if basename in _KNOWN_TERMINAL_APPS:
+                return os.path.basename(comm)  # preserve original case
+            current = ppid
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            break
+    return ""
+
+
+def _get_pid_version(pid: int) -> str:
+    """Extract Claude version from the lsof txt entries (binary path)."""
+    try:
+        result = subprocess.run(
+            ["lsof", "-a", "-p", str(pid), "-d", "txt", "-Fn"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            if "claude/versions/" in line:
+                return line.rsplit("/", 1)[-1]
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+def _get_pid_children(pid: int) -> list[str]:
+    """Return command-line summaries of direct child processes."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-P", str(pid)],
+            capture_output=True, text=True, timeout=3,
+        )
+        child_pids = result.stdout.strip().splitlines()
+        if not child_pids:
+            return []
+        result = subprocess.run(
+            ["ps", "-o", "args=", "-p", ",".join(child_pids)],
+            capture_output=True, text=True, timeout=3,
+        )
+        return [ln.strip() for ln in result.stdout.strip().splitlines() if ln.strip()]
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+
+
+def _gather_untracked_info(pids: set[int]) -> list[UntrackedProcessInfo]:
+    """Gather detailed process info for a set of untracked PIDs."""
+    # Batch-fetch ps fields for all PIDs in one call
+    ps_data: dict[int, dict[str, str]] = {}
+    pid_list = sorted(pids)
+    if pid_list:
+        try:
+            result = subprocess.run(
+                ["ps", "-o", "pid=,lstart=,etime=,tty=,args=",
+                 "-p", ",".join(str(p) for p in pid_list)],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.strip().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                # Format: PID  DOW MON DD HH:MM:SS YYYY  ELAPSED  TTY  ARGS...
+                parts = line.split()
+                if len(parts) < 8:
+                    continue
+                try:
+                    pid = int(parts[0])
+                except ValueError:
+                    continue
+                # lstart is 5 fields: DOW MON DD HH:MM:SS YYYY
+                started = " ".join(parts[1:6])
+                etime = parts[6]
+                tty = parts[7] if parts[7] != "??" else ""
+                args = " ".join(parts[8:]) if len(parts) > 8 else ""
+                ps_data[pid] = {
+                    "started": started, "etime": etime,
+                    "tty": tty, "args": args,
+                }
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    results: list[UntrackedProcessInfo] = []
+    for pid in pid_list:
+        ps = ps_data.get(pid, {})
+        results.append(UntrackedProcessInfo(
+            pid=pid,
+            cwd=_get_pid_cwd(pid),
+            parent_app=_get_pid_parent_app(pid),
+            args=ps.get("args", ""),
+            started=ps.get("started", ""),
+            uptime=ps.get("etime", ""),
+            version=_get_pid_version(pid),
+            tty=ps.get("tty", ""),
+            children=_get_pid_children(pid),
+        ))
+    return results
+
+
 def _find_stale_session_ids(
     sessions: list[SessionInfo], live_pids: set[int]
 ) -> list[str]:
@@ -970,13 +1124,17 @@ def check_session_health(
 ) -> HealthStatus:
     """Compare tracked sessions against live Claude processes."""
     stale_ids = _find_stale_session_ids(sessions, claude_pids)
-    live_tracked = len(sessions) - len(stale_ids)
-    untracked_count = max(0, len(claude_pids) - live_tracked)
+    stale_set = set(stale_ids)
+    tracked_pids = {
+        s.pid
+        for s in sessions
+        if s.pid is not None and s.pid > 0 and s.session_id not in stale_set
+    }
     return HealthStatus(
         tracked_count=len(sessions),
         process_count=len(claude_pids),
         stale_ids=stale_ids,
-        untracked_count=untracked_count,
+        untracked_pids=claude_pids - tracked_pids,
     )
 
 
@@ -1166,6 +1324,95 @@ class ConfirmKillScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class UntrackedDetailsScreen(ModalScreen[None]):
+    """Modal showing details about untracked Claude CLI processes."""
+
+    CSS = """
+    UntrackedDetailsScreen {
+        align: center middle;
+    }
+    #untracked-panel {
+        width: 80;
+        height: auto;
+        max-height: 32;
+        background: $surface;
+        border: tall $warning;
+        padding: 1 2;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss_modal", "Close", show=False),
+        Binding("d", "dismiss_modal", "Close", show=False),
+        Binding("q", "dismiss_modal", "Close", show=False),
+    ]
+
+    def __init__(self, pids: set[int]) -> None:
+        super().__init__()
+        self._pids = pids
+
+    def compose(self) -> ComposeResult:
+        n = len(self._pids)
+        yield VerticalScroll(
+            Static(
+                f"[bold]{_plural(n, 'Untracked Session')}[/bold]\n\n"
+                "[dim]Loading process details...[/dim]",
+                id="untracked-content",
+            ),
+            id="untracked-panel",
+        )
+
+    def on_mount(self) -> None:
+        self._load_details()
+
+    @work(thread=True, exclusive=True, group="untracked-details")
+    def _load_details(self) -> None:
+        info = _gather_untracked_info(self._pids)
+        self.app.call_from_thread(self._apply_details, info)
+
+    @staticmethod
+    def _format_entry(p: UntrackedProcessInfo) -> list[str]:
+        """Format a single untracked process as markup lines."""
+        dim = "[dim]unknown[/dim]"
+        lines = [f"[bold]PID {p.pid}[/bold]  {p.args or ''}"]
+        lines.append(f"  Dir:     {p.cwd or dim}")
+        lines.append(f"  App:     {p.parent_app or dim}")
+        if p.version:
+            lines.append(f"  Version: {p.version}")
+        if p.started or p.uptime:
+            time_parts = []
+            if p.started:
+                time_parts.append(p.started)
+            if p.uptime:
+                time_parts.append(f"(up {p.uptime})")
+            lines.append(f"  Started: {' '.join(time_parts)}")
+        if p.tty:
+            lines.append(f"  TTY:     {p.tty}")
+        if p.children:
+            lines.append(f"  Children:")
+            for child in p.children:
+                lines.append(f"    - {child}")
+        return lines
+
+    def _apply_details(self, info: list[UntrackedProcessInfo]) -> None:
+        n = len(info)
+        lines: list[str] = [
+            f"[bold]{_plural(n, 'Untracked Session')}[/bold]",
+            "[dim]No cctop tracking file - started before the plugin was installed.[/dim]",
+            "",
+        ]
+        for i, p in enumerate(info):
+            lines.extend(self._format_entry(p))
+            if i < n - 1:
+                lines.append("")
+        lines.append("")
+        lines.append("[dim]Press d or esc to close[/dim]")
+        self.query_one("#untracked-content", Static).update("\n".join(lines))
+
+    def action_dismiss_modal(self) -> None:
+        self.dismiss(None)
+
+
 # --- Help overlay ---
 
 _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
@@ -1192,6 +1439,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("k", "Kill session"),
         ("a", "Tmux attach"),
         ("R", "Purge dead sessions"),
+        ("D", "Untracked session details"),
         ("r", "Force refresh"),
     ]),
     ("General", [
@@ -1395,6 +1643,7 @@ class SessionsDashboard(App):
         Binding("q", "quit", "Quit", show=False),
         Binding("r", "force_refresh", "Refresh", show=False),
         Binding("R", "purge_dead", "Purge dead", show=False),
+        Binding("D", "show_untracked_details", "Untracked details", show=False),
         Binding("s", "sort_by_column", "Sort col", show=False),
         Binding("h", "hide_column", "Hide col", show=False),
         Binding("c", "show_columns", "Columns", show=False),
@@ -1537,6 +1786,12 @@ class SessionsDashboard(App):
     def action_purge_dead(self) -> None:
         """Remove dead session files and refresh."""
         self._do_purge()
+
+    def action_show_untracked_details(self) -> None:
+        """Show details about untracked Claude sessions."""
+        if not self._last_health or not self._last_health.untracked_pids:
+            return
+        self.push_screen(UntrackedDetailsScreen(self._last_health.untracked_pids))
 
     def action_sort_by_column(self) -> None:
         """Sort by the currently active column. Press again to toggle direction."""
@@ -2050,11 +2305,21 @@ class SessionsDashboard(App):
     def _update_health_bar(self) -> None:
         """Show or hide the health warning bar based on current health status."""
         bar = self.query_one("#health-bar", Static)
-        if self._last_health and self._last_health.has_mismatch:
+        h = self._last_health
+        if h and h.has_mismatch:
             k = self._fkey
-            bar.update(Text.from_markup(
-                f"{self._last_health.message}  {k('R')} Purge"
-            ))
+            parts: list[str] = []
+            if h.stale_ids:
+                parts.append(
+                    f"{_plural(len(h.stale_ids), 'stale session')} detected"
+                    f"  {k('R')} Purge"
+                )
+            if h.untracked_pids:
+                parts.append(
+                    f"{_plural(h.untracked_count, 'session')} not tracked"
+                    f"  {k('D')} Details"
+                )
+            bar.update(Text.from_markup("  |  ".join(parts)))
             bar.add_class("visible")
         else:
             bar.update("")

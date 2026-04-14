@@ -879,6 +879,7 @@ def test_health_all_live():
     health = check_session_health(sessions, pids)
     assert not health.has_mismatch
     assert health.stale_ids == []
+    assert health.untracked_pids == set()
     assert health.untracked_count == 0
     assert health.message == ""
 
@@ -897,13 +898,14 @@ def test_health_stale_sessions():
 
 
 def test_health_untracked_processes():
-    """More processes than tracked sessions, untracked_count > 0."""
+    """More processes than tracked sessions, untracked_pids populated."""
     sessions = [
         SessionInfo(session_id="a", pid=100),
     ]
     pids = {100, 200, 300}  # 2 extra processes
     health = check_session_health(sessions, pids)
     assert health.has_mismatch
+    assert health.untracked_pids == {200, 300}
     assert health.untracked_count == 2
     assert "2 sessions not tracked" in health.message
 
@@ -919,7 +921,7 @@ def test_health_mixed_scenario():
     health = check_session_health(sessions, pids)
     assert health.has_mismatch
     assert set(health.stale_ids) == {"b", "c"}
-    # live_tracked = 3 - 2 = 1, untracked = 3 - 1 = 2
+    assert health.untracked_pids == {400, 500}
     assert health.untracked_count == 2
     msg = health.message
     assert "stale" in msg
@@ -935,7 +937,7 @@ def test_health_no_pid_sessions_ignored():
     pids = {100}
     health = check_session_health(sessions, pids)
     assert health.stale_ids == []
-    # live_tracked = 2 - 0 = 2, untracked = max(0, 1 - 2) = 0
+    # tracked_pids = {100}, untracked = {100} - {100} = empty
     assert health.untracked_count == 0
 
 
