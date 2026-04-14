@@ -381,6 +381,27 @@ def format_cost(cost: float) -> str:
     return f"${cost:.2f}"
 
 
+
+# Map /color names to Tailwind 400 hex values for consistent rendering
+_COLOR_TO_RICH: dict[str, str] = {
+    "red": "#F87171",
+    "blue": "#60A5FA",
+    "green": "#4ADE80",
+    "yellow": "#FACC15",
+    "purple": "#C084FC",
+    "orange": "#FB923C",
+    "pink": "#F472B6",
+    "cyan": "#22D3EE",
+    "default": "white",
+}
+
+
+def _rich_color(color: str | None = None) -> str:
+    """Map a /color value to a valid Rich color name."""
+    default_color = _COLOR_TO_RICH["default"]
+    return _COLOR_TO_RICH.get(color, default_color)
+
+
 # --- Data structures ---
 
 
@@ -429,6 +450,7 @@ class SessionInfo:
     error_details: str = ""
     tool_failures: int = 0
     effort_level: str = ""
+    session_color: str = ""
     status_context: str = ""
     recent_events: list = field(default_factory=list)
 
@@ -508,9 +530,15 @@ COLUMNS: tuple[ColumnDef, ...] = (
         "slug",
         header="Name",
         cell=lambda s: (
-            Text.assemble(("● ", "#e0af68"), s.custom_title)
+            Text.assemble(
+                ("● ", _rich_color(s.session_color)),
+                s.custom_title,
+            )
             if s.custom_title
-            else Text.assemble(("○ ", "dim"), s.session_id[:8])
+            else Text.assemble(
+                ("○ ", _rich_color(s.session_color)),
+                s.session_id[:8],
+            )
         ),
         sort_key=lambda s: (s.custom_title or s.slug or s.session_id).lower(),
         filterable=True,
@@ -777,6 +805,7 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         subagent_cache_read_tokens=poller.get("subagent_cache_read_tokens", 0),
         subagent_cache_creation_tokens=poller.get("subagent_cache_creation_tokens", 0),
         effort_level=poller.get("effort_level", ""),
+        session_color=poller.get("session_color", ""),
         recent_events=poller.get("recent_events", []),
         # Poller preferred, hook fallback
         tool_count=poller.get("tool_count", 0) or hook.get("tool_count", 0),
@@ -2226,6 +2255,9 @@ class SessionsDashboard(App):
         # Metrics
         if s.effort_level:
             _add("Effort", f"[yellow]{s.effort_level}[/yellow]")
+        if s.session_color:
+            rc = _rich_color(s.session_color)
+            _add("Color", f"[{rc}]{s.session_color}[/{rc}]")
         cost = _calc_cost(s)
         if cost >= 0.005:
             _add("Cost", f"[cyan]{format_cost(cost)}[/cyan]")
