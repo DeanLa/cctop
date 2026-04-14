@@ -873,6 +873,12 @@ class UntrackedProcessInfo:
     pid: int
     cwd: str = ""
     parent_app: str = ""
+    args: str = ""
+    started: str = ""
+    uptime: str = ""
+    version: str = ""
+    tty: str = ""
+    children: list[str] = field(default_factory=list)
 
 
 def _run_ps() -> str | None:
@@ -965,16 +971,91 @@ def _get_pid_parent_app(pid: int) -> str:
     return ""
 
 
+def _get_pid_version(pid: int) -> str:
+    """Extract Claude version from the lsof txt entries (binary path)."""
+    try:
+        result = subprocess.run(
+            ["lsof", "-a", "-p", str(pid), "-d", "txt", "-Fn"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            if "claude/versions/" in line:
+                return line.rsplit("/", 1)[-1]
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+def _get_pid_children(pid: int) -> list[str]:
+    """Return command-line summaries of direct child processes."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-P", str(pid)],
+            capture_output=True, text=True, timeout=3,
+        )
+        child_pids = result.stdout.strip().splitlines()
+        if not child_pids:
+            return []
+        result = subprocess.run(
+            ["ps", "-o", "args=", "-p", ",".join(child_pids)],
+            capture_output=True, text=True, timeout=3,
+        )
+        return [ln.strip() for ln in result.stdout.strip().splitlines() if ln.strip()]
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+
+
 def _gather_untracked_info(pids: set[int]) -> list[UntrackedProcessInfo]:
-    """Gather cwd and parent app info for a set of untracked PIDs."""
-    return [
-        UntrackedProcessInfo(
+    """Gather detailed process info for a set of untracked PIDs."""
+    # Batch-fetch ps fields for all PIDs in one call
+    ps_data: dict[int, dict[str, str]] = {}
+    pid_list = sorted(pids)
+    if pid_list:
+        try:
+            result = subprocess.run(
+                ["ps", "-o", "pid=,lstart=,etime=,tty=,args=",
+                 "-p", ",".join(str(p) for p in pid_list)],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.strip().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                # Format: PID  DOW MON DD HH:MM:SS YYYY  ELAPSED  TTY  ARGS...
+                parts = line.split()
+                if len(parts) < 8:
+                    continue
+                try:
+                    pid = int(parts[0])
+                except ValueError:
+                    continue
+                # lstart is 5 fields: DOW MON DD HH:MM:SS YYYY
+                started = " ".join(parts[1:6])
+                etime = parts[6]
+                tty = parts[7] if parts[7] != "??" else ""
+                args = " ".join(parts[8:]) if len(parts) > 8 else ""
+                ps_data[pid] = {
+                    "started": started, "etime": etime,
+                    "tty": tty, "args": args,
+                }
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    results: list[UntrackedProcessInfo] = []
+    for pid in pid_list:
+        ps = ps_data.get(pid, {})
+        results.append(UntrackedProcessInfo(
             pid=pid,
             cwd=_get_pid_cwd(pid),
             parent_app=_get_pid_parent_app(pid),
-        )
-        for pid in sorted(pids)
-    ]
+            args=ps.get("args", ""),
+            started=ps.get("started", ""),
+            uptime=ps.get("etime", ""),
+            version=_get_pid_version(pid),
+            tty=ps.get("tty", ""),
+            children=_get_pid_children(pid),
+        ))
+    return results
 
 
 def _find_stale_session_ids(
@@ -1201,9 +1282,9 @@ class UntrackedDetailsScreen(ModalScreen[None]):
         align: center middle;
     }
     #untracked-panel {
-        width: 72;
+        width: 80;
         height: auto;
-        max-height: 24;
+        max-height: 32;
         background: $surface;
         border: tall $warning;
         padding: 1 2;
@@ -1239,6 +1320,30 @@ class UntrackedDetailsScreen(ModalScreen[None]):
         info = _gather_untracked_info(self._pids)
         self.app.call_from_thread(self._apply_details, info)
 
+    @staticmethod
+    def _format_entry(p: UntrackedProcessInfo) -> list[str]:
+        """Format a single untracked process as markup lines."""
+        dim = "[dim]unknown[/dim]"
+        lines = [f"[bold]PID {p.pid}[/bold]  {p.args or ''}"]
+        lines.append(f"  Dir:     {p.cwd or dim}")
+        lines.append(f"  App:     {p.parent_app or dim}")
+        if p.version:
+            lines.append(f"  Version: {p.version}")
+        if p.started or p.uptime:
+            time_parts = []
+            if p.started:
+                time_parts.append(p.started)
+            if p.uptime:
+                time_parts.append(f"(up {p.uptime})")
+            lines.append(f"  Started: {' '.join(time_parts)}")
+        if p.tty:
+            lines.append(f"  TTY:     {p.tty}")
+        if p.children:
+            lines.append(f"  Children:")
+            for child in p.children:
+                lines.append(f"    - {child}")
+        return lines
+
     def _apply_details(self, info: list[UntrackedProcessInfo]) -> None:
         n = len(info)
         lines: list[str] = [
@@ -1247,9 +1352,7 @@ class UntrackedDetailsScreen(ModalScreen[None]):
             "",
         ]
         for i, p in enumerate(info):
-            lines.append(f"[bold]PID {p.pid}[/bold]")
-            lines.append(f"  Dir: {p.cwd or '[dim]unknown[/dim]'}")
-            lines.append(f"  App: {p.parent_app or '[dim]unknown[/dim]'}")
+            lines.extend(self._format_entry(p))
             if i < n - 1:
                 lines.append("")
         lines.append("")
