@@ -58,13 +58,15 @@ When writing or modifying Textual-based code (the dashboard, widgets, tests), al
 ## Installing After Changes
 
 The plugin runs from a **copy** in `~/.claude/plugins/cache/`, not from this directory.
-After editing any file under `plugin/`, you **must** reinstall:
+After editing any file under `plugin/`, changes must be installed before testing.
 
+The user runs dev install from their own terminal:
 ```bash
-./install.sh --dev
+./install.sh --dev --wt <prefix>   # from main repo, auto-finds worktree by prefix
+./install.sh --dev                  # from inside a worktree directly
 ```
 
-**Always run `./install.sh --dev` after modifying any plugin file** (hooks, scripts, manifests). New Claude sessions will pick up the changes; existing sessions keep the old version. **Do this before telling the user to test.** Never say "restart cctop" without installing first. "DI" is shorthand for dev install.
+**Do NOT run `./install.sh --dev` yourself.** The user handles installation from their iTerm2 terminal. After making changes to plugin files, tell the user the changes are ready for DI (dev install). "DI" is shorthand for dev install.
 
 ## Releasing
 

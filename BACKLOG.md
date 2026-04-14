@@ -3,6 +3,9 @@
 Items tagged with `PR-X` are assigned to a PR group, see [plans/pr-groups.md](plans/pr-groups.md) for details.
 When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
+## Manual
+- in activity, mcp can look nicer, more like toole so for example it can be instead of mcp__atlassian_jira_get_issue it can be something like cyan(jira_get_issue) grey(mcp:atlassian)"
+- 
 ## Table & Columns
 - [ ] **84.** Improve column width allocation: current widths feel off, needs investigation into better sizing strategy (auto-fit content, proportional, min/max constraints, or user-resizable) `PR-S`
 
@@ -29,6 +32,7 @@ When a PR merges, mark its items `[x]` and append ` — PR-X`.
 - [ ] **81.** Move "Purge dead" action out of the footer bar: hide the `R` keybinding from the footer and surface the purge option only in the health warning bar when stale/dead sessions are detected `PR-V`
 - [ ] **85.** Wrap-around row selection: navigating past the last row jumps to the first, and vice versa (pacman loop) `PR-T`
 - [ ] **87.** Collapse/expand group from any row: when group-by is active, a keybinding (e.g. `x`) on any session row should collapse its parent group. Press again to expand. No need to navigate to the group header row. `PR-T`
+- [ ] **92.** Color refactor: route all hardcoded Rich markup colors (yellow for counts, cyan for info, green for times) through `_rich_color` or a similar centralized palette, so UI colors are consistent and configurable in one place (relates to #86)
 
 ## Activity & Status Detection
 - [ ] **53.** Classify Bash commands into sub-statuses by inspecting the command string: `testing` (pytest, jest, npm test, go test, cargo test, make test), `building` (npm build, tsc, webpack, cargo build, make, go build), `installing` (pip install, npm install, brew install, cargo add), `linting` (eslint, ruff, black, prettier, mypy), `git op` (git commit/push/pull/rebase/merge), `creating PR` (gh pr create/merge) `PR-Q`
