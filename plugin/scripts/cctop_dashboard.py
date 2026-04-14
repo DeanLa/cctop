@@ -1237,7 +1237,7 @@ class UntrackedDetailsScreen(ModalScreen[None]):
     @work(thread=True, exclusive=True, group="untracked-details")
     def _load_details(self) -> None:
         info = _gather_untracked_info(self._pids)
-        self.call_from_thread(self._apply_details, info)
+        self.app.call_from_thread(self._apply_details, info)
 
     def _apply_details(self, info: list[UntrackedProcessInfo]) -> None:
         n = len(info)
