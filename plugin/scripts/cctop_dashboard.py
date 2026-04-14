@@ -171,43 +171,48 @@ def _render_message(
     ]
 
 
-STATUS_STYLE_MAP: dict[str, tuple[str, str]] = {
+# Categories for status grouping
+_WAITING = "waiting"
+_WORKING = "working"
+
+STATUS_STYLE_MAP: dict[str, tuple[str, str, str]] = {
+    # (color, label, category)
     # Idle variants
-    "idle": ("green", "idle"),
-    "idle:awaiting_plan": ("blue", "awaiting plan"),
-    "idle:needs_input": ("#ff8700", "needs input"),
+    "idle": ("green", "idle", _WAITING),
+    "idle:awaiting_plan": ("blue", "awaiting plan", _WAITING),
+    "idle:needs_input": ("#ff8700", "needs input", _WAITING),
     # Active
-    "thinking": ("yellow", "thinking"),
-    "started": ("blue", "started"),
-    "resumed": ("#5fd7ff", "resumed"),
+    "thinking": ("yellow", "thinking", _WORKING),
+    "started": ("blue", "started", _WORKING),
+    "resumed": ("#5fd7ff", "resumed", _WORKING),
     # Permission / input waiting
-    "awaiting_permission": ("#ff8700", "awaiting permission"),
-    "awaiting_input": ("#ff5f5f", "awaiting input"),
-    "awaiting_mcp_input": ("#ff8700", "awaiting mcp input"),
+    "awaiting_permission": ("#ff8700", "awaiting permission", _WAITING),
+    "awaiting_input": ("#ff5f5f", "awaiting input", _WAITING),
+    "awaiting_mcp_input": ("#ff8700", "awaiting mcp input", _WAITING),
     # Tools
-    "tool:Bash": ("green", "running cmd"),
-    "tool:WebSearch": ("magenta", "searching web"),
-    "tool:WebFetch": ("magenta", "searching web"),
-    "tool:Agent": ("#af87ff", "subagent"),
-    "tool:Read": ("cyan", "reading"),
-    "tool:Edit": ("#ff8700", "editing"),
-    "tool:Write": ("#ff8700", "editing"),
-    "tool:NotebookEdit": ("#ff8700", "editing"),
-    "tool:Glob": ("cyan", "searching"),
-    "tool:Grep": ("cyan", "searching"),
-    "tool:EnterPlanMode": ("blue", "entering plan"),
-    "tool:ExitPlanMode": ("blue", "exiting plan"),
-    "tool:AskUserQuestion": ("#ff5f5f", "asking user"),
-    "tool:EnterWorktree": ("blue", "entering worktree"),
-    "tool:ExitWorktree": ("blue", "exiting worktree"),
-    "tool:TaskCreate": ("#af87ff", "creating task"),
-    "tool:TaskUpdate": ("#af87ff", "updating task"),
-    "tool:TaskList": ("cyan", "listing tasks"),
-    "tool:TaskGet": ("cyan", "reading task"),
-    "tool:SendMessage": ("#af87ff", "messaging"),
-    "tool:TeamCreate": ("#af87ff", "creating team"),
-    "tool:Skill": ("#af87ff", "running skill"),
-    "ended": ("dim", "ended"),
+    "tool:Bash": ("green", "running cmd", _WORKING),
+    "tool:WebSearch": ("magenta", "searching web", _WORKING),
+    "tool:WebFetch": ("magenta", "searching web", _WORKING),
+    "tool:Agent": ("#af87ff", "subagent", _WORKING),
+    "tool:Read": ("cyan", "reading", _WORKING),
+    "tool:Edit": ("#ff8700", "editing", _WORKING),
+    "tool:Write": ("#ff8700", "editing", _WORKING),
+    "tool:NotebookEdit": ("#ff8700", "editing", _WORKING),
+    "tool:Glob": ("cyan", "searching", _WORKING),
+    "tool:Grep": ("cyan", "searching", _WORKING),
+    "tool:EnterPlanMode": ("blue", "entering plan", _WORKING),
+    "tool:ExitPlanMode": ("blue", "exiting plan", _WORKING),
+    "tool:AskUserQuestion": ("#ff5f5f", "asking user", _WAITING),
+    "tool:EnterWorktree": ("blue", "entering worktree", _WORKING),
+    "tool:ExitWorktree": ("blue", "exiting worktree", _WORKING),
+    "tool:TaskCreate": ("#af87ff", "creating task", _WORKING),
+    "tool:TaskUpdate": ("#af87ff", "updating task", _WORKING),
+    "tool:TaskList": ("cyan", "listing tasks", _WORKING),
+    "tool:TaskGet": ("cyan", "reading task", _WORKING),
+    "tool:SendMessage": ("#af87ff", "messaging", _WORKING),
+    "tool:TeamCreate": ("#af87ff", "creating team", _WORKING),
+    "tool:Skill": ("#af87ff", "running skill", _WORKING),
+    "ended": ("dim", "ended", _WAITING),
 }
 
 # Activity feed: icon + color per event type, single source of truth.
@@ -493,7 +498,7 @@ def styled_status(session: SessionInfo) -> Text:
         return Text(f"mcp:{server}", style="magenta")
 
     if raw in STATUS_STYLE_MAP:
-        colour, label = STATUS_STYLE_MAP[raw]
+        colour, label, _ = STATUS_STYLE_MAP[raw]
         return Text(label, style=colour)
 
     # tool:* catch-all
@@ -676,6 +681,21 @@ def _is_stale(s: SessionInfo) -> bool:
     return age is not None and age > STALE_SECONDS
 
 
+def _is_waiting(status: str) -> bool:
+    """Check whether a status string is a waiting-for-input status."""
+    entry = STATUS_STYLE_MAP.get(status)
+    return entry is not None and entry[2] == _WAITING
+
+
+def _status_category(s: SessionInfo) -> str:
+    """Classify a session as Waiting / Working / Stale."""
+    if _is_stale(s):
+        return "Stale"
+    if _is_waiting(s.status):
+        return "Waiting for input"
+    return "Working"
+
+
 GROUP_DEFS: dict[str, GroupDef] = {
     "project": GroupDef(
         "project",
@@ -688,11 +708,11 @@ GROUP_DEFS: dict[str, GroupDef] = {
         "Model",
         group_fn=lambda s: friendly_model_name(s.model) if s.model else "unknown",
     ),
-    "stale": GroupDef(
-        "stale",
-        "Active / Stale",
-        group_fn=lambda s: "Stale" if _is_stale(s) else "Active",
-        order=("Active", "Stale"),
+    "status": GroupDef(
+        "status",
+        "Status",
+        group_fn=_status_category,
+        order=("Waiting for input", "Working", "Stale"),
     ),
     "renamed": GroupDef(
         "renamed",
@@ -1694,7 +1714,11 @@ class SessionsDashboard(App):
         sort_cfg = cfg.get("sort", {})
         self.sort_mode = sort_cfg.get("column", "activity")
         self.sort_reverse = sort_cfg.get("reverse", True)
-        self.group_by = cfg.get("group", {}).get("by", "")
+        group_by = cfg.get("group", {}).get("by", "")
+        if group_by == "stale":
+            group_by = "status"
+            save_config({"group": {"by": "status"}})
+        self.group_by = group_by
         activity_cfg = cfg.get("activity", {})
         panel = self.query_one("#detail-activity-scroll")
         panel.display = activity_cfg.get("visible", False)

@@ -46,6 +46,8 @@ from cctop_dashboard import (
     _reset_session_data,
     _group_sessions,
     _is_stale,
+    _is_waiting,
+    _status_category,
     GroupDef,
     GROUP_DEFS,
     _format_event_time,
@@ -1934,18 +1936,19 @@ def test_group_sessions_by_project():
 
 
 def test_group_sessions_fixed_order():
-    """Fixed-order grouping (stale) respects predefined order, omits empty groups."""
+    """Fixed-order grouping (status) respects predefined order, omits empty groups."""
     sessions = [
-        SessionInfo(session_id="s1", last_activity=_now_iso()),
+        SessionInfo(session_id="s1", last_activity=_now_iso(), status="idle"),
         SessionInfo(session_id="s2", last_activity=_ago_iso(120)),  # stale (>60min)
-        SessionInfo(session_id="s3", last_activity=_now_iso()),
+        SessionInfo(session_id="s3", last_activity=_now_iso(), status="thinking"),
     ]
-    gd = GROUP_DEFS["stale"]
+    gd = GROUP_DEFS["status"]
     groups = _group_sessions(sessions, gd)
     names = [name for name, _ in groups]
-    assert names == ["Active", "Stale"]
-    assert len(groups[0][1]) == 2  # Active
-    assert len(groups[1][1]) == 1  # Stale
+    assert names == ["Waiting for input", "Working", "Stale"]
+    assert len(groups[0][1]) == 1  # Waiting (idle)
+    assert len(groups[1][1]) == 1  # Working (thinking)
+    assert len(groups[2][1]) == 1  # Stale
 
 
 def test_group_sessions_renamed():
@@ -1990,9 +1993,43 @@ def test_is_stale_old():
     assert _is_stale(s)
 
 
+def test_is_waiting_known_waiting():
+    """Known waiting statuses return True."""
+    assert _is_waiting("idle")
+    assert _is_waiting("awaiting_permission")
+    assert _is_waiting("tool:AskUserQuestion")
+    assert _is_waiting("ended")
+
+
+def test_is_waiting_known_working():
+    """Known working statuses return False."""
+    assert not _is_waiting("thinking")
+    assert not _is_waiting("tool:Bash")
+    assert not _is_waiting("tool:Edit")
+
+
+def test_is_waiting_unknown_defaults_to_working():
+    """Unknown statuses (dynamic tool:*, error:*) default to not waiting."""
+    assert not _is_waiting("tool:SomeCustomTool")
+    assert not _is_waiting("error:rate_limit")
+    assert not _is_waiting("mcp:something")
+
+
+def test_status_category_three_way():
+    """_status_category splits into Waiting/Working/Stale correctly."""
+    waiting = SessionInfo(session_id="s1", status="idle", last_activity=_now_iso())
+    assert _status_category(waiting) == "Waiting for input"
+
+    working = SessionInfo(session_id="s2", status="thinking", last_activity=_now_iso())
+    assert _status_category(working) == "Working"
+
+    stale = SessionInfo(session_id="s3", status="idle", last_activity=_ago_iso(120))
+    assert _status_category(stale) == "Stale"
+
+
 def test_group_def_registry():
     """All expected group-by options are registered."""
-    assert set(GROUP_DEFS.keys()) == {"project", "model", "stale", "renamed"}
+    assert set(GROUP_DEFS.keys()) == {"project", "model", "status", "renamed"}
 
 
 # --- Group-by TUI integration tests ---
@@ -2015,14 +2052,14 @@ async def test_group_by_project(fake_status_dir):
 
 
 @pytest.mark.asyncio
-async def test_group_by_stale(fake_status_dir):
-    """Stale grouping creates Active and Stale headers."""
+async def test_group_by_status(fake_status_dir):
+    """Status grouping creates Waiting/Working/Stale headers."""
     write_fake_session(fake_status_dir, "active-1")
     write_fake_session(fake_status_dir, "stale-1", last_activity=_ago_iso(120))
     app = SessionsDashboard()
     async with app.run_test() as pilot:
         await _wait_for_rows(pilot, app, expected=2)
-        app.group_by = "stale"
+        app.group_by = "status"
         await pilot.pause()
         table = app.query_one(DataTable)
         # 2 headers + 2 sessions = 4 rows
