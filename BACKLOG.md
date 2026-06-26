@@ -3,6 +3,8 @@
 Items tagged with `PR-X` are assigned to a PR group, see [plans/pr-groups.md](plans/pr-groups.md) for details.
 When a PR merges, mark its items `[x]` and append ` — PR-X`.
 
+## Manual
+- When moving tmux panes, the "attach tmux" can lose the tmux window, because panes change. it needs to use the global "%XX" pane number, or maybe change every 
 ## Table & Columns
 - [ ] **84.** Improve column width allocation: current widths feel off, needs investigation into better sizing strategy (auto-fit content, proportional, min/max constraints, or user-resizable) `PR-S`
 
