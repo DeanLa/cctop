@@ -1,6 +1,6 @@
 #!/bin/bash
 # cctop hook — writes status JSON for the cctop dashboard.
-# Registered for 12 hook events. Must be fast (<50ms).
+# Registered for 24 hook events. Must be fast (<50ms).
 #
 # Writes ONLY hook-owned fields to <id>.json. The poller writes its own
 # fields to <id>.poller.json. The dashboard merges both. No shared-file races.
@@ -26,7 +26,13 @@ eval "$(echo "$input" | jq -r '
   @sh "ERROR=\(.error // "")",
   @sh "ERROR_DETAILS=\(.error_details // "")",
   @sh "AGENT_TYPE=\(.agent_type // "")",
-  @sh "NEW_CWD=\(.new_cwd // "")"
+  @sh "NEW_CWD=\(.new_cwd // "")",
+  @sh "FILE_PATH=\(.file_path // "")",
+  @sh "FILE_EVENT=\(.event // "")",
+  @sh "TASK_SUBJECT=\(.task_subject // "")",
+  @sh "TEAMMATE_NAME=\(.teammate_name // "")",
+  @sh "TRIGGER=\(.trigger // "")",
+  @sh "MESSAGE=\(.message // "")"
 ' 2>/dev/null)"
 
 # Detect tmux session and window on SessionStart
@@ -96,6 +102,26 @@ if [ "$EVENT" = "PreToolUse" ]; then
         SUBAGENT_TYPE=$(echo "$input" | jq -r '.tool_input.subagent_type // ""' 2>/dev/null)
     fi
 fi
+
+# Hook event feed: append lifecycle events to hook_events (rendered in the
+# dashboard's activity panel). PreToolUse/PostToolUse/UserPromptSubmit are
+# excluded — the poller already derives them from the transcript.
+FEED="true"
+HOOK_DETAIL=""
+case "$EVENT" in
+    PreToolUse|PostToolUse|UserPromptSubmit) FEED="false" ;;
+    SessionStart)               HOOK_DETAIL="$SOURCE" ;;
+    Notification)               HOOK_DETAIL="$MESSAGE" ;;
+    StopFailure)                HOOK_DETAIL="$ERROR" ;;
+    FileChanged)                HOOK_DETAIL="${FILE_EVENT:+$FILE_EVENT }$FILE_PATH" ;;
+    InstructionsLoaded)         HOOK_DETAIL="$FILE_PATH" ;;
+    TaskCompleted)              HOOK_DETAIL="$TASK_SUBJECT" ;;
+    TeammateIdle)               HOOK_DETAIL="$TEAMMATE_NAME" ;;
+    SubagentStart|SubagentStop) HOOK_DETAIL="$AGENT_TYPE" ;;
+    PreCompact|PostCompact)     HOOK_DETAIL="$TRIGGER" ;;
+    CwdChanged)                 HOOK_DETAIL="$NEW_CWD" ;;
+    PermissionRequest)          HOOK_DETAIL="$TOOL" ;;
+esac
 
 # Determine status from event
 case "$EVENT" in
@@ -168,8 +194,10 @@ case "$EVENT" in
         STATUS=$(echo "$EXISTING" | jq -r '.status // "unknown"' 2>/dev/null)
         TOOL=$(echo "$EXISTING" | jq -r '.current_tool // ""' 2>/dev/null) ;;
     *)
-        STATUS="unknown"
-        TOOL="" ;;
+        # Heartbeat: any other event (PermissionRequest, PreCompact, FileChanged,
+        # ...) preserves status and just refreshes last_event/last_activity.
+        STATUS=$(echo "$EXISTING" | jq -r '.status // "unknown"' 2>/dev/null)
+        TOOL=$(echo "$EXISTING" | jq -r '.current_tool // ""' 2>/dev/null) ;;
 esac
 
 NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -236,6 +264,8 @@ echo "$EXISTING" | jq \
     --argjson tool_failure_delta "$TOOL_FAILURE_DELTA" \
     --arg status_context "$STATUS_CONTEXT" \
     --argjson clear_context "$CLEAR_CONTEXT" \
+    --argjson feed "$FEED" \
+    --arg feed_detail "$HOOK_DETAIL" \
     '{
         session_id: $sid,
         cwd: $cwd,
@@ -259,5 +289,8 @@ echo "$EXISTING" | jq \
         tool_failures: ((.tool_failures // 0) + $tool_failure_delta),
         status_context: (if $status_context != "" then $status_context
                          elif $clear_context then ""
-                         else (.status_context // "") end)
+                         else (.status_context // "") end),
+        hook_events: (if $feed
+                      then (((.hook_events // []) + [{ts: $now, type: "hook", name: $event, detail: $feed_detail}]) | .[-100:])
+                      else (.hook_events // []) end)
     }' > "$TMPFILE" && mv "$TMPFILE" "$STATUS_FILE"
