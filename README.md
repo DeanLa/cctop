@@ -59,7 +59,7 @@ cctop gives you one screen to see all of them.
 | **Started** | Session start time (e.g. "14:30") |
 | **Activity** | Time since last event (e.g. "2m ago") |
 
-Highlight any row to see a detail panel with the full working directory, git branch, token breakdown, files edited, subagent and error counts, the last user prompt, and Claude's last response.
+Highlight any row to see a detail panel with the full working directory, git branch, token breakdown, files edited, subagent and error counts, the last user prompt, and Claude's last response. Press `v` to toggle the activity panel, a timestamped feed of the session's recent prompts, responses, and tool calls, interleaved with hook lifecycle events (compaction, permission requests, file changes, config reloads, and more).
 
 ### Status Labels
 
