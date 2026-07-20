@@ -131,7 +131,8 @@ def write_fake_session(tmpdir: Path, sid: str, *,
                        tmux_session: str = "",
                        tmux_window: str = "",
                        status_context: str = "",
-                       recent_events: list | None = None) -> None:
+                       recent_events: list | None = None,
+                       hook_events: list | None = None) -> None:
     """Write a pair of hook + poller JSON files into tmpdir."""
     hook = {
         "session_id": sid,
@@ -154,6 +155,8 @@ def write_fake_session(tmpdir: Path, sid: str, *,
     }
     if pid is not None:
         hook["pid"] = pid
+    if hook_events is not None:
+        hook["hook_events"] = hook_events
     (tmpdir / f"{sid}.json").write_text(json.dumps(hook))
     poller = {
         "slug": slug or f"proj-{sid[:4]}",
@@ -190,8 +193,13 @@ def _render_static_text(detail: Static) -> str:
     content = detail.content
     if not content:
         return ""
+    return _render_group_text(content)
+
+
+def _render_group_text(renderable) -> str:
+    """Render a Rich renderable to plain text for assertions."""
     buf = StringIO()
-    RichConsole(file=buf, force_terminal=False, width=200).print(content)
+    RichConsole(file=buf, force_terminal=False, width=200).print(renderable)
     return buf.getvalue()
 
 
@@ -1226,6 +1234,69 @@ def test_load_sessions_new_fields_default(fake_status_dir):
     assert s.error_type == ""
     assert s.error_details == ""
     assert s.tool_failures == 0
+
+
+# --- Hook event feed tests ---
+
+
+def test_load_sessions_hook_events(fake_status_dir):
+    """hook_events from the hook JSON should load into SessionInfo."""
+    events = [{"ts": _now_iso(), "type": "hook", "name": "PreCompact", "detail": "auto"}]
+    write_fake_session(fake_status_dir, "hooked", hook_events=events)
+    sessions = load_sessions()
+    assert sessions[0].hook_events == events
+
+
+def test_load_sessions_hook_events_absent(fake_status_dir):
+    """Old hook files without hook_events should default to an empty list."""
+    write_fake_session(fake_status_dir, "old-file")
+    sessions = load_sessions()
+    assert sessions[0].hook_events == []
+
+
+def test_build_activity_renders_hook_events():
+    """Hook events should render with the hook icon, event name, and detail."""
+    session = SessionInfo(
+        session_id="s1",
+        hook_events=[{"ts": "2026-07-17T10:00:00Z", "type": "hook",
+                      "name": "PreCompact", "detail": "auto"}],
+    )
+    text = _render_group_text(SessionsDashboard._build_activity(session))
+    assert "●" in text
+    assert "PreCompact" in text
+    assert "auto" in text
+
+
+def test_build_activity_merges_hook_and_poller_events():
+    """Hook + poller events should interleave in timestamp order (newest first)."""
+    session = SessionInfo(
+        session_id="s1",
+        recent_events=[
+            {"ts": "2026-07-17T10:00:00Z", "type": "user", "detail": "first prompt"},
+            {"ts": "2026-07-17T10:02:00Z", "type": "assistant", "detail": "reply"},
+        ],
+        hook_events=[
+            {"ts": "2026-07-17T10:01:00Z", "type": "hook",
+             "name": "PermissionRequest", "detail": "Bash"},
+        ],
+    )
+    text = _render_group_text(SessionsDashboard._build_activity(session))
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    assert len(lines) == 3
+    # Newest first: assistant reply, then the hook event, then the user prompt
+    assert "reply" in lines[0]
+    assert "PermissionRequest" in lines[1]
+    assert "first prompt" in lines[2]
+
+
+def test_build_activity_without_hook_events():
+    """The feed should render fine from poller events alone."""
+    session = SessionInfo(
+        session_id="s1",
+        recent_events=[{"ts": "2026-07-17T10:00:00Z", "type": "user", "detail": "hi"}],
+    )
+    text = _render_group_text(SessionsDashboard._build_activity(session))
+    assert "hi" in text
 
 
 # --- Status rendering in table integration test ---
