@@ -223,6 +223,7 @@ ACTIVITY_STYLE: dict[str, tuple[str, str]] = {
     "tool": ("⚙", "cyan"),
     "tool:AskUserQuestion": ("⚙", "#ff5f5f"),
     "slash_cmd": ("", "#af87ff bold"),
+    "hook": ("●", "blue"),
 }
 
 
@@ -458,6 +459,7 @@ class SessionInfo:
     session_color: str = ""
     status_context: str = ""
     recent_events: list = field(default_factory=list)
+    hook_events: list = field(default_factory=list)
 
     @property
     def context_tokens(self) -> int:
@@ -799,6 +801,7 @@ def _build_session_info(sid: str, hook: dict, poller: dict) -> SessionInfo:
         error_details=hook.get("error_details", ""),
         tool_failures=hook.get("tool_failures", 0),
         status_context=hook.get("status_context", ""),
+        hook_events=hook.get("hook_events", []),
         # Poller-only fields
         slug=poller.get("slug", ""),
         git_branch=poller.get("git_branch", ""),
@@ -2602,19 +2605,26 @@ class SessionsDashboard(App):
     @staticmethod
     def _build_activity(session: SessionInfo) -> Group:
         """Assemble the timestamped activity feed for the left panel."""
-        if not session.recent_events:
+        events = sorted(
+            session.recent_events + session.hook_events,
+            key=lambda ev: ev.get("ts", ""),
+        )
+        if not events:
             return Group(Text.from_markup("[dim]No recent activity[/dim]"))
 
         slash_c = ACTIVITY_STYLE["slash_cmd"][1]
         lines: list[Text] = []
-        for ev in reversed(session.recent_events):
+        for ev in reversed(events):
             ts = _format_event_time(ev.get("ts", ""))
             ev_type = ev.get("type", "")
             detail = ev.get("detail", "")
 
-            if ev_type == "tool":
+            if ev_type in ("tool", "hook"):
                 name = ev.get("name", "?")
-                icon, c = ACTIVITY_STYLE.get(f"tool:{name}", ACTIVITY_STYLE["tool"])
+                if ev_type == "tool":
+                    icon, c = ACTIVITY_STYLE.get(f"tool:{name}", ACTIVITY_STYLE["tool"])
+                else:
+                    icon, c = ACTIVITY_STYLE["hook"]
                 detail = _shorten_path(detail) if "/" in detail else _truncate(detail)
                 detail_str = f" [dim]{detail}[/dim]" if detail else ""
                 lines.append(Text.from_markup(
