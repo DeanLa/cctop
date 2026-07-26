@@ -46,6 +46,12 @@ Every hook receives a JSON object on stdin with at least:
 | `WorktreeRemove` | (worktree info) | — | No |
 | `SessionEnd` | (end reason) | end reason | No |
 
+> **Warning: `WorktreeCreate`/`WorktreeRemove` are delegation hooks, not observational events.**
+> When configured, the `EnterWorktree` tool routes worktree creation/removal *through* the hook
+> instead of running `git worktree add`/`remove` itself (this is how non-git VCS isolation works).
+> Registering a passive observer (like a status tracker) on these events breaks `EnterWorktree`
+> for every session. Never register them for monitoring purposes.
+
 ## Hook Output (stdout JSON)
 
 Hooks communicate back to Claude Code by printing JSON to stdout:
