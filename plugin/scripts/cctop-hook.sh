@@ -1,6 +1,9 @@
 #!/bin/bash
 # cctop hook — writes status JSON for the cctop dashboard.
-# Registered for 24 hook events. Must be fast (<50ms).
+# Registered for 22 hook events. Must be fast (<50ms).
+# WorktreeCreate/WorktreeRemove are deliberately NOT registered: they are
+# delegation hooks (EnterWorktree routes worktree creation through them when
+# configured), not observational events — registering breaks EnterWorktree.
 #
 # Writes ONLY hook-owned fields to <id>.json. The poller writes its own
 # fields to <id>.poller.json. The dashboard merges both. No shared-file races.
