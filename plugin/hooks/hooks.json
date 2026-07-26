@@ -211,26 +211,6 @@
         ]
       }
     ],
-    "WorktreeCreate": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/cctop-hook.sh"
-          }
-        ]
-      }
-    ],
-    "WorktreeRemove": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/cctop-hook.sh"
-          }
-        ]
-      }
-    ],
     "SessionEnd": [
       {
         "hooks": [
