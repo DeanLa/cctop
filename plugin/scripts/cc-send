@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""cc-send — message or rename a running Claude Code session over its socket.
+
+Claude Code 2.1.224+ binds a per-session Unix domain socket for cross-session
+messaging. This tool speaks that wire protocol: send a message to a peer's
+queue, or rename a live session (the only external way to retitle a running
+session — there is no `claude rename` CLI).
+
+Stdlib only, self-contained. cctop shells out to it for the dashboard rename;
+it also works standalone as a general peer-messaging tool.
+
+Usage:
+  cc-send "your message"               # queue a message to a session
+  cc-send -S <uuid> --rename "Title"   # rename a session by its id
+  cc-send --list                       # print the session roster
+
+Target resolution (first hit wins): --socket, --session-id (roster scan),
+$CLAUDE_CODE_MESSAGING_SOCKET, or the sole *.sock in the socket dir.
+
+Exit codes: 0 ok, 1 connect/send failure, 2 no/ambiguous target.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import json
+import os
+import socket
+import sys
+
+ROSTER_DIR = os.path.expanduser("~/.claude/sessions")
+SOCK_DIR = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "cc-socks")
+
+
+class ResolveError(Exception):
+    """Target could not be resolved to a single addressable socket."""
+
+    def __init__(self, message: str, code: int = 2) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _iter_roster(roster_dir: str):
+    """Yield parsed roster entries, skipping unreadable or corrupt files."""
+    for path in sorted(glob.glob(os.path.join(roster_dir, "*.json"))):
+        try:
+            with open(path) as fh:
+                yield json.load(fh)
+        except (OSError, ValueError):
+            continue
+
+
+def find_by_session_id(session_id: str, roster_dir: str) -> str | None:
+    """Return the messaging socket path for a session id, or None if absent.
+
+    Scans roster files (~/.claude/sessions/<pid>.json). None means either no
+    matching session or a matching session with no socket (pre-2.1.224 or
+    ended) — both are unaddressable.
+    """
+    for data in _iter_roster(roster_dir):
+        if data.get("sessionId") == session_id:
+            return data.get("messagingSocketPath") or None
+    return None
+
+
+def resolve_socket(args: argparse.Namespace) -> str:
+    """Resolve the target socket path from args, raising ResolveError if not unique."""
+    if args.socket:
+        return args.socket
+
+    if args.session_id:
+        sock = find_by_session_id(args.session_id, ROSTER_DIR)
+        if sock:
+            return sock
+        raise ResolveError(
+            f"no messaging socket for session {args.session_id} "
+            "(session started before Claude Code 2.1.224, or ended)"
+        )
+
+    env_sock = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
+    if env_sock:
+        return env_sock
+
+    socks = sorted(glob.glob(os.path.join(SOCK_DIR, "*.sock")))
+    if len(socks) == 1:
+        return socks[0]
+    if not socks:
+        raise ResolveError(f"no sockets found in {SOCK_DIR}; pass --session-id or --socket")
+    listing = "\n  ".join(socks)
+    raise ResolveError(f"multiple sessions found; pass --session-id or --socket. candidates:\n  {listing}")
+
+
+def build_frame(args: argparse.Namespace) -> dict:
+    """Build the wire frame: a control/rename frame or a type:user message frame."""
+    if args.rename is not None:
+        return {"type": "control", "action": "rename", "name": args.rename}
+    return {
+        "type": "user",
+        "message": {"role": "user", "content": args.message or ""},
+        "from": args.sender,
+        "priority": "now" if args.now else "next",
+    }
+
+
+def send_frame(sock_path: str, frame: dict) -> None:
+    """Send a newline-terminated JSON frame to the socket (fire-and-forget).
+
+    Raises OSError if the socket is missing, stale, or refuses the connection.
+    """
+    payload = (json.dumps(frame, separators=(",", ":")) + "\n").encode("utf-8")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.connect(sock_path)
+        sock.sendall(payload)
+
+
+def list_roster(roster_dir: str) -> list[tuple[str, str, str, str]]:
+    """Return (name, sessionId, socket, status) rows for every roster entry."""
+    rows: list[tuple[str, str, str, str]] = []
+    for data in _iter_roster(roster_dir):
+        if "sessionId" not in data:
+            continue
+        rows.append((
+            data.get("name", ""),
+            data.get("sessionId", ""),
+            data.get("messagingSocketPath", ""),
+            data.get("status", ""),
+        ))
+    return rows
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(prog="cc-send", description="Message or rename a running Claude Code session.")
+    p.add_argument("message", nargs="?", default=None, help="message body (or read from stdin)")
+    p.add_argument("-S", "--session-id", dest="session_id", default=None, help="target session by id (roster lookup)")
+    p.add_argument("-s", "--socket", dest="socket", default=None, help="target an explicit socket path")
+    p.add_argument("--rename", dest="rename", default=None, help="rename the session instead of messaging it")
+    p.add_argument("-f", "--from", dest="sender", default="cc-send", help="sender label (default: cc-send)")
+    p.add_argument("--now", dest="now", action="store_true", help="priority 'now' (skip the queue)")
+    p.add_argument("--list", dest="list", action="store_true", help="print the session roster and exit")
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+
+    if args.list:
+        for name, sid, sock, status in list_roster(ROSTER_DIR):
+            print(f"{name}\t{sid}\t{sock}\t{status}")
+        return 0
+
+    if args.rename is not None:
+        args.rename = args.rename.strip()
+        if not args.rename:
+            print("cc-send: --rename requires a non-empty name", file=sys.stderr)
+            return 2
+    else:
+        if args.message is None and not sys.stdin.isatty():
+            args.message = sys.stdin.read()
+        args.message = (args.message or "").strip()
+        if not args.message:
+            print("cc-send: no message body (pass as an argument or via stdin)", file=sys.stderr)
+            return 2
+
+    try:
+        sock_path = resolve_socket(args)
+    except ResolveError as exc:
+        print(f"cc-send: {exc}", file=sys.stderr)
+        return exc.code
+
+    try:
+        send_frame(sock_path, build_frame(args))
+    except OSError as exc:
+        print(f"cc-send: send failed ({sock_path}): {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
