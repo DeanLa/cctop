@@ -35,6 +35,7 @@ cctop gives you one screen to see all of them.
 | `q` | Quit |
 | `r` | Force refresh |
 | `R` | Purge dead sessions (PID check + staleness fallback) |
+| `F2` | Rename the highlighted session (live, no restart needed) |
 | `s` | Open sort picker (activity, name, status, duration, turns, tokens, tools, files, agents, errors) |
 | `ctrl+p` | Open command palette (switch theme, etc.) |
 
@@ -90,6 +91,12 @@ The Status column shows what each session is doing right now:
 Sessions that go quiet for 1+ hour are marked stale. Sessions that end clean up after themselves. Sessions whose Claude process has exited (e.g. Ctrl+C) are automatically removed by the background poller via PID checks. Press `R` to manually purge dead sessions, or run `cctop --reset` to wipe all session data and start fresh.
 
 A health check bar may appear at the bottom of the dashboard when cctop detects a mismatch between tracked sessions and running Claude processes. This is normal if you had sessions running before installing cctop.
+
+### Renaming Sessions
+
+Press `F2` to rename the highlighted session from the dashboard. The new name applies to the running session immediately, no restart needed, and shows up in the Name column. Renaming talks to the session over the messaging socket Claude Code binds for each session, so it requires Claude Code 2.1.224 or newer (older or already-ended sessions can't be renamed, and cctop will tell you so).
+
+Under the hood this uses `cc-send`, a small standalone tool bundled with cctop (`plugin/scripts/cc-send`) that can also message or rename any session from the command line. Run `cc-send --list` to see the roster, or `cc-send --help` for usage.
 
 ### Configuration
 
