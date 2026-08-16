@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 from rich.console import Console as RichConsole, Group
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, Input, Static
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "plugin" / "scripts"))
@@ -2626,3 +2626,88 @@ def test_load_sessions_recent_events(fake_status_dir):
     assert len(sessions) == 1
     assert len(sessions[0].recent_events) == 1
     assert sessions[0].recent_events[0]["detail"] == "test"
+
+
+# --- Rename ---
+
+
+@pytest.mark.asyncio
+async def test_rename_session_invokes_cc_send(fake_status_dir):
+    """Pressing 'n', typing a name, submitting → cc-send call + row title update."""
+    write_fake_session(fake_status_dir, "sess-rename", custom_title="")
+    app = SessionsDashboard()
+
+    def _fake_run(cmd, **kwargs):
+        # Simulate the poller surfacing the new name (cc-send → transcript → poller)
+        if cmd and "--rename" in cmd:
+            new_name = cmd[cmd.index("--rename") + 1]
+            poller = fake_status_dir / "sess-rename.poller.json"
+            data = json.loads(poller.read_text())
+            data["custom_title"] = new_name
+            poller.write_text(json.dumps(data))
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with patch("cctop_dashboard.subprocess.run", side_effect=_fake_run) as mock_run:
+        async with app.run_test() as pilot:
+            await _wait_for_rows(pilot, app, expected=1)
+            table = app.query_one(DataTable)
+            table.move_cursor(row=0)
+            await pilot.press("f2")
+            await pilot.pause()
+            inp = app.screen.query_one("#rename-input", Input)
+            inp.value = "my-new-name"
+            inp.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+
+            rename_calls = []
+            for _ in range(30):
+                await pilot.pause()
+                rename_calls = [
+                    c for c in mock_run.call_args_list
+                    if c.args and "--rename" in c.args[0]
+                ]
+                if rename_calls:
+                    break
+            assert len(rename_calls) == 1
+            cmd = rename_calls[0].args[0]
+            assert "--session-id" in cmd
+            assert "sess-rename" in cmd
+            assert "my-new-name" in cmd
+
+            session = None
+            for _ in range(20):
+                await pilot.pause()
+                session = next(
+                    (s for s in app._sessions if s.session_id == "sess-rename"), None
+                )
+                if session and session.custom_title == "my-new-name":
+                    break
+            assert session is not None
+            assert session.custom_title == "my-new-name"
+
+
+@pytest.mark.asyncio
+async def test_rename_on_group_header_is_noop(fake_status_dir):
+    """Pressing 'n' on a group header row does not invoke cc-send."""
+    write_fake_session(fake_status_dir, "s1", cwd="/tmp/alpha")
+    write_fake_session(fake_status_dir, "s2", cwd="/tmp/beta")
+    app = SessionsDashboard()
+    with patch("cctop_dashboard.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+        async with app.run_test() as pilot:
+            await _wait_for_rows(pilot, app, expected=2)
+            app.group_by = "project"
+            await pilot.pause()
+            table = app.query_one(DataTable)
+            table.move_cursor(row=0)  # a group header row
+            await pilot.press("f2")
+            for _ in range(10):
+                await pilot.pause()
+            rename_calls = [
+                c for c in mock_run.call_args_list
+                if c.args and "--rename" in c.args[0]
+            ]
+            assert rename_calls == []

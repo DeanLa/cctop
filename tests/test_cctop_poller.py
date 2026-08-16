@@ -337,3 +337,19 @@ class TestSystemMessageInParseNewLines:
         result = parse_new_lines(lines)
         assert result["last_system_msg"] == ""
         assert result["last_user_msg"] == "Thanks, now do something else"
+
+
+class TestCustomTitle:
+    """A socket rename makes Claude append a custom-title entry; the poller reads it."""
+
+    def test_custom_title_line_sets_custom_title(self):
+        line = json.dumps({"type": "custom-title", "customTitle": "My Renamed Session"})
+        result = parse_new_lines([line])
+        assert result["custom_title"] == "My Renamed Session"
+
+    def test_latest_custom_title_wins(self):
+        lines = [
+            json.dumps({"type": "custom-title", "customTitle": "first"}),
+            json.dumps({"type": "custom-title", "customTitle": "second"}),
+        ]
+        assert parse_new_lines(lines)["custom_title"] == "second"

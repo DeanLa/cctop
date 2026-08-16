@@ -1347,6 +1347,49 @@ class ConfirmKillScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class RenameScreen(ModalScreen[str | None]):
+    """Modal for renaming a session. Returns the new name, or None on cancel."""
+
+    CSS = """
+    RenameScreen {
+        align: center middle;
+    }
+    #rename-dialog {
+        width: 60;
+        height: auto;
+        background: $surface;
+        border: tall $accent;
+        padding: 1 2;
+    }
+    #rename-dialog Input {
+        margin-top: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+    ]
+
+    def __init__(self, current_name: str) -> None:
+        super().__init__()
+        self._current_name = current_name
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="rename-dialog"):
+            yield Static("Rename session  [dim](enter) save  (esc) cancel[/dim]")
+            yield Input(value=self._current_name, id="rename-input")
+
+    def on_mount(self) -> None:
+        self.query_one("#rename-input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.dismiss(event.value.strip() or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class UntrackedDetailsScreen(ModalScreen[None]):
     """Modal showing details about untracked Claude CLI processes."""
 
@@ -1460,6 +1503,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Actions", [
         ("k", "Kill session"),
+        ("F2", "Rename session"),
         ("a", "Tmux attach"),
         ("R", "Purge dead sessions"),
         ("D", "Untracked session details"),
@@ -1672,6 +1716,7 @@ class SessionsDashboard(App):
         Binding("c", "show_columns", "Columns", show=False),
         Binding("C", "show_all_columns", "Show all", show=False),
         Binding("k", "kill_session", "Kill", show=False),
+        Binding("f2", "rename_session", "Rename", show=False),
         Binding("a", "tmux_attach", "Tmux Attach", show=False),
         Binding("g", "group_by_picker", "Group", show=False),
         Binding("G", "clear_group_by", "Ungroup", show=False),
@@ -1953,6 +1998,8 @@ class SessionsDashboard(App):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Live-filter the table as the user types."""
+        if event.input.id != "filter-bar":
+            return  # ignore inputs from modals (e.g. rename)
         self._filter_text = event.value
         self._repopulate_table()
         displayed = self._filtered_sessions()
@@ -2040,6 +2087,51 @@ class SessionsDashboard(App):
         except OSError as exc:
             self.call_from_thread(self.notify, f"Kill failed: {exc}", severity="error")
         self.call_from_thread(self._schedule_refresh)
+
+    def action_rename_session(self) -> None:
+        """Rename the highlighted session via a modal + cc-send socket call."""
+        session = self._selected_session()
+        if session is None:
+            self.notify("No session selected", severity="warning")
+            return
+
+        def _on_submit(new_name: str | None) -> None:
+            if new_name:
+                self._do_rename(session.session_id, new_name)
+
+        self.push_screen(RenameScreen(session.custom_title), callback=_on_submit)
+
+    @work(thread=True, exclusive=True, group="rename")
+    def _do_rename(self, sid: str, name: str) -> None:
+        """Shell out to the sibling cc-send tool to rename a live session.
+
+        Invoked via `python3` (not the exec bit) so a stripped bit or noexec
+        mount can't break it. On success the poller surfaces the new name next
+        cycle; we set it optimistically so the table updates immediately.
+        """
+        cc_send = Path(__file__).resolve().parent / "cc-send"
+        try:
+            result = subprocess.run(
+                ["python3", str(cc_send), "--session-id", sid, "--rename", name],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self.call_from_thread(self.notify, f"Rename failed: {exc}", severity="error")
+            return
+        if result.returncode == 0:
+            self.call_from_thread(self._apply_optimistic_rename, sid, name)
+        else:
+            first = next((ln for ln in (result.stderr or "").splitlines() if ln.strip()), "")
+            first = first.removeprefix("cc-send: ").strip() or "cc-send failed"
+            self.call_from_thread(self.notify, f"Can't rename: {first}", severity="warning")
+
+    def _apply_optimistic_rename(self, sid: str, name: str) -> None:
+        """Reflect a rename in the table immediately; the poller confirms it next cycle."""
+        for s in self._sessions:
+            if s.session_id == sid:
+                s.custom_title = name
+                break
+        self._repopulate_table()
 
     def _find_tmux_target_by_pid(self, pid: int) -> str | None:
         """Find tmux target (session:window) by process PID.
@@ -2259,7 +2351,7 @@ class SessionsDashboard(App):
         if self.group_by:
             parts[-1] += f"  {k('x')} Fold"
         parts.append(f"{k('v')} Activity")
-        parts.append(f"{k('k')} Kill")
+        parts.append(f"{k('k')} Kill  {k('F2')} Rename")
         parts.append(f"{k('?')} Help")
         if self._filter_text:
             parts.append(f'{k("/")} "{self._filter_text}"')
