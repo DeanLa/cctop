@@ -890,6 +890,27 @@ def test_get_claude_pids_excludes_non_claude_basename():
     assert pids == {1000}
 
 
+def test_get_claude_pids_excludes_non_session_subcommands():
+    """`claude agents`, the daemon and pty hosts aren't sessions; bg-spare and prompts are."""
+    ps_output = (
+        "  PID COMMAND\n"
+        " 1000 claude\n"
+        " 2000 /Users/me/.local/bin/claude agents\n"
+        " 3000 /Users/me/.local/bin/claude daemon run --origin transient\n"
+        " 4000 claude bg-pty-host --bg-pty-host /tmp/x.pty.sock 200 50 -- /bin/claude\n"
+        " 5000 claude bg-spare --bg-spare /tmp/x.claim.sock\n"
+        " 6000 claude attach abc123\n"
+        " 7000 claude --resume abc123\n"
+        " 8000 claude fix the login bug\n"
+    )
+    with patch("cctop_dashboard.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=ps_output, stderr=""
+        )
+        pids = get_claude_pids()
+    assert pids == {1000, 5000, 7000, 8000}
+
+
 # --- check_session_health() unit tests ---
 
 

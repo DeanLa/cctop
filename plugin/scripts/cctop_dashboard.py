@@ -913,6 +913,14 @@ _PS_EXCLUDE_PATTERNS = (
     "caffeinate",
     "grep",
 )
+# `claude <subcommand>` processes that aren't sessions (from `claude --help`,
+# plus the hidden daemon/pty-host helpers). `bg-spare` is a real background session.
+_NON_SESSION_SUBCOMMANDS = frozenset({
+    "agents", "attach", "auth", "auto-mode", "bg-pty-host", "daemon", "doctor",
+    "gateway", "import", "install", "kill", "logs", "mcp", "plugin", "plugins",
+    "purge", "respawn", "rm", "setup-token", "stop", "ultrareview", "update",
+    "upgrade",
+})
 
 # Basenames (lowercase) of known terminal/editor apps for parent-process detection
 _KNOWN_TERMINAL_APPS: set[str] = {
@@ -998,8 +1006,10 @@ def _is_claude_cli_process(cmd: str) -> bool:
         return False
     if any(pat in cmd for pat in _PS_EXCLUDE_PATTERNS):
         return False
-    basename = os.path.basename(cmd.split()[0]) if cmd.split() else ""
-    return basename == "claude"
+    argv = cmd.split()
+    if not argv or os.path.basename(argv[0]) != "claude":
+        return False
+    return len(argv) == 1 or argv[1] not in _NON_SESSION_SUBCOMMANDS
 
 
 def get_claude_pids() -> set[int]:
