@@ -271,6 +271,20 @@ def test_get_context_window_empty():
 def test_get_context_window_unknown():
     assert get_context_window("gpt-4o") == 200_000
 
+@pytest.mark.parametrize("model", [
+    "claude-opus-5-5",
+    "claude-opus-4-7",
+    "claude-fable-5-1",
+    "claude-sonnet-5-5",
+    "us.anthropic.claude-opus-5-5-v1",
+])
+def test_get_context_window_native_1m(model):
+    assert get_context_window(model) == 1_000_000
+
+@pytest.mark.parametrize("model", ["claude-opus-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"])
+def test_get_context_window_pre_1m_models(model):
+    assert get_context_window(model) == 200_000
+
 
 # --- format_start_time tests ---
 

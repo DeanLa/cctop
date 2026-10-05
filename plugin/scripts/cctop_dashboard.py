@@ -43,6 +43,17 @@ from textual.widgets.option_list import Option
 STATUS_DIR = Path.home() / ".cctop"
 CONFIG_PATH = STATUS_DIR / "config.toml"
 _CONTEXT_WINDOW_DEFAULT = 200_000
+# Natively-1M models, copied from Claude Code's built-in registry since hooks and
+# transcripts don't carry the window. Substring match: "claude-opus-5" covers "-5-5".
+_NATIVE_1M_MODELS = (
+    "claude-sonnet-5",
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-opus-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-mythos-preview",
+)
 STALE_SECONDS = 60 * 60
 HEALTH_CHECK_INTERVAL = 10.0  # seconds between ps-based health checks
 
@@ -246,7 +257,9 @@ def friendly_model_name(model: str) -> str:
 
 def get_context_window(model: str) -> int:
     """Return the context window size for a model string."""
-    return 1_000_000 if "[1m]" in model else _CONTEXT_WINDOW_DEFAULT
+    if "[1m]" in model or any(m in model for m in _NATIVE_1M_MODELS):
+        return 1_000_000
+    return _CONTEXT_WINDOW_DEFAULT
 
 
 def format_start_time(iso_str: str) -> str:
