@@ -43,6 +43,17 @@ from textual.widgets.option_list import Option
 STATUS_DIR = Path.home() / ".cctop"
 CONFIG_PATH = STATUS_DIR / "config.toml"
 _CONTEXT_WINDOW_DEFAULT = 200_000
+# Natively-1M models, copied from Claude Code's built-in registry since hooks and
+# transcripts don't carry the window. Substring match: "claude-opus-5" covers "-5-5".
+_NATIVE_1M_MODELS = (
+    "claude-sonnet-5",
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-opus-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-mythos-preview",
+)
 STALE_SECONDS = 60 * 60
 HEALTH_CHECK_INTERVAL = 10.0  # seconds between ps-based health checks
 
@@ -246,7 +257,9 @@ def friendly_model_name(model: str) -> str:
 
 def get_context_window(model: str) -> int:
     """Return the context window size for a model string."""
-    return 1_000_000 if "[1m]" in model else _CONTEXT_WINDOW_DEFAULT
+    if "[1m]" in model or any(m in model for m in _NATIVE_1M_MODELS):
+        return 1_000_000
+    return _CONTEXT_WINDOW_DEFAULT
 
 
 def format_start_time(iso_str: str) -> str:
@@ -900,6 +913,14 @@ _PS_EXCLUDE_PATTERNS = (
     "caffeinate",
     "grep",
 )
+# `claude <subcommand>` processes that aren't sessions (from `claude --help`,
+# plus the hidden daemon/pty-host helpers). `bg-spare` is a real background session.
+_NON_SESSION_SUBCOMMANDS = frozenset({
+    "agents", "attach", "auth", "auto-mode", "bg-pty-host", "daemon", "doctor",
+    "gateway", "import", "install", "kill", "logs", "mcp", "plugin", "plugins",
+    "purge", "respawn", "rm", "setup-token", "stop", "ultrareview", "update",
+    "upgrade",
+})
 
 # Basenames (lowercase) of known terminal/editor apps for parent-process detection
 _KNOWN_TERMINAL_APPS: set[str] = {
@@ -985,8 +1006,10 @@ def _is_claude_cli_process(cmd: str) -> bool:
         return False
     if any(pat in cmd for pat in _PS_EXCLUDE_PATTERNS):
         return False
-    basename = os.path.basename(cmd.split()[0]) if cmd.split() else ""
-    return basename == "claude"
+    argv = cmd.split()
+    if not argv or os.path.basename(argv[0]) != "claude":
+        return False
+    return len(argv) == 1 or argv[1] not in _NON_SESSION_SUBCOMMANDS
 
 
 def get_claude_pids() -> set[int]:

@@ -271,6 +271,20 @@ def test_get_context_window_empty():
 def test_get_context_window_unknown():
     assert get_context_window("gpt-4o") == 200_000
 
+@pytest.mark.parametrize("model", [
+    "claude-opus-5-5",
+    "claude-opus-4-7",
+    "claude-fable-5-1",
+    "claude-sonnet-5-5",
+    "us.anthropic.claude-opus-5-5-v1",
+])
+def test_get_context_window_native_1m(model):
+    assert get_context_window(model) == 1_000_000
+
+@pytest.mark.parametrize("model", ["claude-opus-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"])
+def test_get_context_window_pre_1m_models(model):
+    assert get_context_window(model) == 200_000
+
 
 # --- format_start_time tests ---
 
@@ -874,6 +888,27 @@ def test_get_claude_pids_excludes_non_claude_basename():
         )
         pids = get_claude_pids()
     assert pids == {1000}
+
+
+def test_get_claude_pids_excludes_non_session_subcommands():
+    """`claude agents`, the daemon and pty hosts aren't sessions; bg-spare and prompts are."""
+    ps_output = (
+        "  PID COMMAND\n"
+        " 1000 claude\n"
+        " 2000 /Users/me/.local/bin/claude agents\n"
+        " 3000 /Users/me/.local/bin/claude daemon run --origin transient\n"
+        " 4000 claude bg-pty-host --bg-pty-host /tmp/x.pty.sock 200 50 -- /bin/claude\n"
+        " 5000 claude bg-spare --bg-spare /tmp/x.claim.sock\n"
+        " 6000 claude attach abc123\n"
+        " 7000 claude --resume abc123\n"
+        " 8000 claude fix the login bug\n"
+    )
+    with patch("cctop_dashboard.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=ps_output, stderr=""
+        )
+        pids = get_claude_pids()
+    assert pids == {1000, 5000, 7000, 8000}
 
 
 # --- check_session_health() unit tests ---
